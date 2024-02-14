@@ -1,0 +1,2 @@
+The RMD file provided is for the manuscript "Examining Generalizability Across Different Surveys: Comparing Nutrient-Based Food Patterns and Their Cross-Sectional Associations with Cardiometabolic Health in US Hispanic/Latino Adults".
+The code can be used for the NHANES and HCHS/SOL datasets. This file provides the code used for the NHANES analysis. To use the code for HCHS/SOL data, you can replace the imported data and variable names.
