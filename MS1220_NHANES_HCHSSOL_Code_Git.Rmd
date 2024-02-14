@@ -1,0 +1,2612 @@
+---
+title: "MS1220_NHANES_HCHSSOL_AnalysisCode"
+author: "Jeanette Varela, email:jvarela@hsph.harvard.edu"
+output: html_document
+---
+
+The code provided in this document is used for both the NHANES and HCHS/SOL dataset. Here we have included the NHANES example. To use this code on the HCHS/SOL data, you can import the data and change the variable names. 
+
+# Data Wrangling
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+#Libraries needed
+require(dplyr)
+require(stringr)
+require(moments)
+require(forcats)
+require(naniar)
+require(plyr)
+require(survey)
+require(psych)
+require(jtools)
+require(ggplot2)
+
+```
+
+## Nutrition variables
+
+This code is taking the average of nutrition intake values for day 1 and day 2. Outliers will be removed and the log version will be used for analysis.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+# Import data
+Full_Data <- read.csv("~/OneDrive - Harvard University/CVD-Nutrient Research/Data/NHANES Data/Merged_NHANES_data.csv")
+
+# Data wrangling
+#combine SFA to Medium chain saturated fatty acids (MCSFA) and long chain saturated fatty acids (LCSFA) 
+Full_Data$MCSFA_1 <- rowSums(Full_Data[, c("DR1TS060", "DR1TS080", "DR1TS100", "DR1TS120")])
+Full_Data$LCSFA_1 <- rowSums(Full_Data[, c("DR1TS140", "DR1TS160", "DR1TS180")])
+
+Full_Data$MCSFA_2 <- rowSums(Full_Data[, c("DR2TS060", "DR2TS080", "DR2TS100", "DR2TS120")])
+Full_Data$LCSFA_2 <- rowSums(Full_Data[, c("DR2TS140", "DR2TS160", "DR2TS180")])
+
+#drop SFA variables
+delSFA <- c("DR1TS060", "DR1TS080", "DR1TS100", "DR1TS120","DR1TS140", "DR1TS160", "DR1TS180","DR2TS060", "DR2TS080", "DR2TS100", "DR2TS120","DR2TS140", "DR2TS160", "DR2TS180")
+Full_Data <- Full_Data[,!(names(Full_Data) %in% delSFA)]
+
+#keep only dietary recall = 1 (this indicates reliable data)
+ReliRecall_Data  <- subset(Full_Data, DR1DRSTZ == 1 | DR2DRSTZ == 1)
+
+# variables that will be kept 
+keepvars <- c("SEQN", "RIAGENDR","RIDAGEYR", "RIDRETH1", "SDMVPSU", "SDMVSTRA", "WTINT2YR", "WTDRD1", "WTDR2D", "DMDEDUC2", "DMDYRSUS", "DMDBORN2", "USBORNLEN_C", "DMDHHSIZ", "INDHHIN2", "DMDMARTL","INDFMPIR", "OCQ380", "OCD150", "ALQ120Q", "ALQ101", "SMQ020", "SMQ040", "LBXTC", "LBDLDL", "LBDHDD", "RXDDRGID1", "RXDDRGID2", "RXDDRGID3", "RXDDRGID10", "RXDDRGID4", "RXDDRGID5", "RXDDRGID6", "RXDDRGID7", "RXDDRGID8", "RXDDRGID9", "RXDDRGID11", "RXDDRGID12", "RXDDRGID13", "RXDDRGID14", "RXDDRGID15", "RXDDRGID16", "RXDDRGID17", "RXDDRGID18", "DIQ280", "DIQ010", "PHAFSTHR", "LBXGLU", "LBXGLT", "DIQ050","DIQ070", "DID070", "BMXBMI", "BMXWAIST","RIAGENDR","RIDAGEYR","BPXSY1", "BPXSY2", "BPXSY3","BPXSY4", "BPXDI1", "BPXDI2", "BPXDI3","BPXDI4", "BPQ050A", "MCQ160B", "MCQ160C", "MCQ160D", "MCQ160E", "MCQ160F", "DR1TKCAL", "DR1TPROT", "DR1TCARB", "DR1TSUGR", "DR1TFIBE", "DR1TTFAT", "DR1TMFAT", "DR1TPFAT", "DR1TCHOL", "DR1TATOC", "DR1TRET",  "DR1TVARA",
+ "DR1TACAR", "DR1TBCAR", "DR1TCRYP", "DR1TLYCO", "DR1TLZ",   "DR1TVB1", 
+ "DR1TVB2",  "DR1TNIAC", "DR1TVB6",  "DR1TFOLA", "DR1TVB12", "DR1TVC",  
+ "DR1TVD",   "DR1TVK",   "DR1TCALC", "DR1TPHOS", "DR1TMAGN", "DR1TIRON",
+ "DR1TZINC", "DR1TCOPP", "DR1TSODI", "DR1TPOTA", "DR1TSELE", "DR1TCAFF",
+ "DR1TS040", "MCSFA_1",  "LCSFA_1", "DR2TKCAL", "DR2TPROT",
+ "DR2TCARB", "DR2TSUGR", "DR2TFIBE", "DR2TTFAT", "DR2TMFAT", "DR2TPFAT",
+ "DR2TCHOL", "DR2TATOC", "DR2TRET",  "DR2TVARA", "DR2TACAR", "DR2TBCAR",
+ "DR2TCRYP", "DR2TLYCO", "DR2TLZ",   "DR2TVB1",  "DR2TVB2",  "DR2TNIAC",
+ "DR2TVB6",  "DR2TFOLA", "DR2TVB12", "DR2TVC",   "DR2TVD",   "DR2TVK", "DR2TCALC", "DR2TPHOS", "DR2TMAGN", "DR2TIRON", "DR2TZINC", "DR2TCOPP",
+ "DR2TSODI", "DR2TPOTA", "DR2TSELE", "DR2TCAFF", "DR2TS040",
+ "MCSFA_2",  "LCSFA_2")
+
+#keep variables in the data set
+ReliRecall_Data <- ReliRecall_Data[,(names(ReliRecall_Data) %in% keepvars)]
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=18, fig.height=10}
+## Nutrient information
+#need all nutrient variables, to compute the 2-day average
+
+nutr <- c("DR1TKCAL", "DR1TPROT", "DR1TCARB", "DR1TSUGR", "DR1TFIBE", "DR1TTFAT",
+ "DR1TMFAT", "DR1TPFAT", "DR1TCHOL", "DR1TATOC", "DR1TRET",  "DR1TVARA",
+ "DR1TACAR", "DR1TBCAR", "DR1TCRYP", "DR1TLYCO", "DR1TLZ",   "DR1TVB1", 
+ "DR1TVB2",  "DR1TNIAC", "DR1TVB6",  "DR1TFOLA", "DR1TVB12", "DR1TVC",  
+ "DR1TVD",   "DR1TVK",   "DR1TCALC", "DR1TPHOS", "DR1TMAGN", "DR1TIRON",
+ "DR1TZINC", "DR1TCOPP", "DR1TSODI", "DR1TPOTA", "DR1TSELE", "DR1TCAFF",
+ "DR1TS040", "MCSFA_1",  "LCSFA_1", "DR2TKCAL", "DR2TPROT",
+ "DR2TCARB", "DR2TSUGR", "DR2TFIBE", "DR2TTFAT", "DR2TMFAT", "DR2TPFAT",
+ "DR2TCHOL", "DR2TATOC", "DR2TRET",  "DR2TVARA", "DR2TACAR", "DR2TBCAR",
+ "DR2TCRYP", "DR2TLYCO", "DR2TLZ",   "DR2TVB1",  "DR2TVB2",  "DR2TNIAC",
+ "DR2TVB6",  "DR2TFOLA", "DR2TVB12", "DR2TVC", "DR2TVD",   "DR2TVK", "DR2TCALC", "DR2TPHOS", "DR2TMAGN", "DR2TIRON", "DR2TZINC", "DR2TCOPP",
+ "DR2TSODI", "DR2TPOTA", "DR2TSELE", "DR2TCAFF", "DR2TS040",
+ "MCSFA_2",  "LCSFA_2")
+
+
+nutr_data_D1.D2 <- ReliRecall_Data[,names(ReliRecall_Data) %in% nutr]
+
+#rename the new variables MCSFA and LCSFA to keep it consistent with the dataset
+nutr_data_D1.D2 <- nutr_data_D1.D2 %>% dplyr::rename(
+      D1_MCSFA = MCSFA_1 ,
+      D1_LCSFA = LCSFA_1 ,
+      D2_MCSFA = MCSFA_2 ,
+      D2_LCSFA = LCSFA_2 
+    )
+
+# make an indicator if it was 1 day or 2 days of nutrient data provided (this will help with the weights)
+
+# everyone has first day of data so only checking the second day
+NAs_day <- data.frame(rowSums(is.na(nutr_data_D1.D2[,c(38:74, 77,78)])))
+useweights <- NULL
+ind_missday2 <- ifelse(NAs_day != 0, 1, 0)
+
+for(i in 1:nrow(nutr_data_D1.D2)){
+  useweights <- ifelse(ind_missday2 == 1, ReliRecall_Data$WTDRD1, ReliRecall_Data$WTDR2D)
+}
+
+# empty vector for the 2-day mean for nutrient data
+mean2days <- NULL
+
+# functions computes the average for the two days
+for (i in unique(colnames(nutr_data_D1.D2[,c(1:37, 75, 76)]))){
+  for (j in unique(colnames(nutr_data_D1.D2[,c(38:74, 77,78)]))){
+ if(stringr::str_sub(i, 4, 15) == stringr::str_sub(j, 4, 15)){
+      mean2days <- rbind(mean2days, rowMeans(subset(nutr_data_D1.D2, select = c(i, j)), na.rm = TRUE))
+    }
+  }
+}
+
+#save the means in a dataframe
+mean2days <- t(mean2days) #transpose matrix
+df_mean <- data.frame(mean2days) # create a dataframe of values 
+names(df_mean)[1:length(df_mean)] <- colnames(nutr_data_D1.D2[,c(1:37, 75,76)]) #add column names to the dataframe
+
+dff <- df_mean
+
+##### get rid of outliers in the data#####
+#####delete those < 0.5th percentile and > 99.5th percentile in energy intake distribution
+
+ENGYquantiles <- quantile( dff$DR1TKCAL, c(0.005, 0.995), na.rm =TRUE)
+
+dff$DR1TKCAL <- ifelse(dff$DR1TKCAL < ENGYquantiles[1] ,0, dff$DR1TKCAL)
+dff$DR1TKCAL <- ifelse(dff$DR1TKCAL > ENGYquantiles[2] ,0, dff$DR1TKCAL)
+
+dff$SEQN <- ReliRecall_Data$SEQN
+
+# add the weights to the dataframe
+dff$WTDIETC <- useweights
+
+# remove people that have extreme energy
+dff <- subset(dff, dff$DR1TKCAL != 0)
+
+#log version of nutrients, except energy
+logdf <- dff
+logdf[,2:39] <- data.matrix(log(dff[,2:39] + 0.1)) 
+log_mean_nutr <- as.data.frame(logdf)
+remove(logdf)
+
+# regular units of nutrients
+nutr_nonlog_mean <- dff
+
+## need to integrate averaged nutrient intake variables back in to the data set but will delete the day 1 and day 2 nutrient measurements and add the correct weights
+EditedNutr_Data <- ReliRecall_Data[,!names(ReliRecall_Data) %in% nutr]
+
+EditedNutr_Data <- merge(EditedNutr_Data, log_mean_nutr, by="SEQN" )
+
+EditedNutr_Data <-  EditedNutr_Data[complete.cases(EditedNutr_Data[,68:106]), ]# everyone had complete data
+```
+
+## Subsetting
+
+Subsetting the data to the population we are interested in studying-- Mexican Americans and Other Hispanics ages 20-74. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#keep those ages 20-74
+Data_Adults <- subset(EditedNutr_Data, RIDAGEYR > 19 & RIDAGEYR < 75 )
+
+#keep Mexican American and Other Hispanic only
+Data_Adults_MAOH <- subset(Data_Adults, RIDRETH1 < 3)
+
+Final_Data <- Data_Adults_MAOH
+```
+
+
+## Recode Variables
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, out.width = "100%"}
+
+#recode education variable to three levels - less than HS, HS diploma and more than HS 
+
+Final_Data$EDU_C <- Final_Data$DMDEDUC2 
+
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(EDU_C = c(7,9)))
+
+Final_Data <- Final_Data %>%
+  mutate(EDU_C = as.factor(EDU_C) %>% 
+           forcats::fct_recode("1" = "1", # less than HS
+                               "1" = "2",
+                               
+                               "2" = "3", #HS
+  
+                               "3" = "4", #More than HS
+                               "3" = "5"))
+
+Final_Data$EDU_C = relevel(Final_Data$EDU_C, ref=3)
+
+
+#recode length in the US into binary for less than or equal to 10 years and more than 10 years
+Final_Data$USYR_C <- Final_Data$DMDYRSUS
+
+Final_Data <- Final_Data %>% 
+              replace_with_na(replace = list(USYR_C = c(77, 99)))
+
+Final_Data$USYR_C <- ifelse( Final_Data$USYR_C < 4, 1, 2) #1 is less than 10 years, 2 is more than 10 years
+
+Final_Data$USYR_C <- relevel(as.factor(Final_Data$USYR_C), ref = 2)
+
+#recode born in US into binary variable for 1 born in the US and not born in the US
+Final_Data$USBorn_C <- Final_Data$DMDBORN2
+
+Final_Data <- Final_Data %>% 
+              replace_with_na(replace = list(USBorn_C = c(7, 9)))
+
+Final_Data$USBorn_C <- ifelse( Final_Data$USBorn_C == 1, 1, 2) # 1 is born in US, 2 is born in Mexico, Other Spanish Speaking Country or Other Non-Spanish Speaking Country 
+
+Final_Data$USBorn_C = relevel(as.factor(Final_Data$USBorn_C), ref = 2)
+
+# recode combination of US born and length in US
+Final_Data <- Final_Data %>%
+  mutate(USBORNLEN_C = factor(case_when((USBorn_C == 1) ~ "BORNUS",
+                                (USYR_C == 1 ) ~ "Less10",
+                                (USYR_C == 2 ) ~ "More10"),
+                      levels = c("BORNUS", "Less10", "More10")))
+
+Final_Data$USBORNLEN_C = relevel(as.factor(Final_Data$USBORNLEN_C), ref="BORNUS")
+
+
+#recode number of people in household into binary variable with less than 2 or >= 2 
+Final_Data$PPLHS_C <- Final_Data$DMDHHSIZ
+
+Final_Data$PPLHS_C <- ifelse(Final_Data$PPLHS_C ==1, 1, 2) #1 indicates 1 or less and 2 indicates 2 or more
+
+#recode household income
+Final_Data$HSINC <- Final_Data$INDHHIN2
+
+Final_Data <- Final_Data  %>% 
+              replace_with_na(replace = list(HSINC = c(77, 99)))
+
+Final_Data <- Final_Data %>%
+  mutate(HSINC_C = factor(
+    case_when((HSINC < 6) ~ "Less than $25,000",
+             (HSINC == 6 | HSINC == 7 | HSINC == 8 | HSINC == 9 | HSINC == 10) ~ "$25,000-$75,000",
+             (HSINC > 13) ~ "More than $75,000"),
+              levels = c("Less than $25,000", "$25,000-$75,000", "More than $75,000")))
+
+
+
+#recode martial status to binary married and not married
+Final_Data$MS_C <- Final_Data$DMDMARTL
+
+Final_Data <- Final_Data  %>% 
+  replace_with_na(replace = list(MS_C = c(77, 99)))
+
+Final_Data$MS_C <- ifelse((Final_Data$MS_C == 1 | Final_Data$MS_C == 6) , 1, 0) # 1 indicates married or living with partner
+
+         
+#recode poverty index ratio into a 3 categorical variable
+Final_Data$INDPIR_C <- Final_Data$INDFMPIR
+
+Final_Data$INDPIR_C <- 
+  cut(as.numeric(Final_Data$INDPIR_C), 
+      breaks = c(0, 1.3, 1.85, 6), 
+      label =c("1", "2", "3") , right = FALSE)
+
+Final_Data$INDPIR_C <- relevel(Final_Data$INDPIR_C, ref = 3)
+
+#recode employment into 3 categorial variable with retired, employed and unemployed
+Final_Data <- Final_Data  %>% 
+              replace_with_na(replace = list(OCD150 = 7))
+
+Final_Data <- Final_Data %>%
+  mutate(EMP_C = factor(
+    case_when((OCQ380 == 3 & OCD150 == 4) ~ "Retired",
+              (OCD150 == 1 | OCD150 == 2) ~ "Employed",
+              (OCD150 == 3) ~ "Unemployed",
+              (OCQ380 != 3 & OCD150 == 4) ~ "Unemployed"),
+              levels = c("Retired", "Employed", "Unemployed")))
+
+
+Final_Data$EMP_C <- relevel(Final_Data$EMP_C, ref = "Retired")
+
+#recode alcohol into 3 categories - never, current and former
+Final_Data <- Final_Data  %>% 
+  replace_with_na(replace = list(ALQ120Q = 999))
+
+Final_Data <- Final_Data %>%
+  mutate(ALC_C = factor(case_when((ALQ101 == 2) ~ "Never",
+                                 (ALQ101 == 1 & ALQ120Q == 0) ~ "Former",
+                                 (ALQ101 == 1 & ALQ120Q > 0) ~ "Current"),
+                      levels = c("Never", "Former", "Current")))
+
+Final_Data$ALC_C = relevel(Final_Data$ALC_C, ref = "Never")
+
+
+#recode SMOKING into 3 categories - never, current and former
+
+Final_Data <- Final_Data %>% 
+  replace_with_na(replace = list(SMQ020 = 9))
+
+Final_Data <- Final_Data %>%
+  mutate(SM3_C = factor(
+    case_when((SMQ020 == 2 ) ~ "Never",
+              (SMQ020 == 1 & SMQ040  == 3) ~ "Former",
+              (SMQ020 == 1 & SMQ040  < 3) ~ "Current"),
+               levels = c("Never", "Former", "Current")))
+
+#change into binary to match SOL/HCHS
+Final_Data$SM_C <- ifelse(Final_Data$SM3_C == "Never" | Final_Data$SM3_C == "Former", 0, 1)
+
+#Final_Data$SM_C <- relevel(Final_Data$SM_C, ref = "Never")
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, out.width = "100%"}
+#Recode CVD risk factors
+
+### Get cholesterol risk cutoff values from [National Heart, Lung, and Blood Institute](https://medlineplus.gov/cholesterollevelswhatyouneedtoknow.html)
+
+Final_Data <- Final_Data %>%
+  mutate(LBXTC_C = factor(case_when((LBXTC < 200) ~ "Normal",
+                                    (LBXTC >= 200) ~ "High"),
+                          levels = c("Normal", "High"))) %>%
+  mutate(LBDLDL_C = factor(case_when((LBDLDL < 100) ~ "Normal",
+                                     (LBDLDL >= 100) ~ "High"),
+                           levels = c("Normal", "High"))) %>%
+  mutate(LBDHDD_C = factor(case_when((LBDHDD > 45) ~ "Normal",
+                                     (LBDHDD <= 45) ~ "Low"),
+                           levels = c("Normal", "Low")))
+
+############
+#need to find chol meds for patient to better identify them
+
+antilipid_names <- c("ATORVASTATIN", "FLUVASTATIN",
+  "LOVASTATIN", "PRAVASTATIN", 
+  "SIMVASTATIN", "FENOFIBRATE", 
+  "GEMFIBROZIL", "CLOFIBRATE", 
+  "COLESEVELAM", "COLESTIPOL", 
+  "CHOLESTYRAMINE", "NIACIN", 
+  "EZETIMIBE", "ORLISTAT")  
+
+antilipid <- c("d04105", "d03183", "d00280","d04787", "d00348", "d00746", "d05348",  "d07110", "d07805", "d04286", "d00245", "d00196", "d04695", "d00744", "d00193", "d04787", "d07110", "d04824","d05348", "d04429")  
+
+Final_Data$ind_CHOLMED <-
+  seq(9, 9, length.out = length(Final_Data$SEQN))
+
+Final_Data$ind_CHOLMED <-
+  ifelse(Final_Data$RXDDRGID1 %in% antilipid |
+      Final_Data$RXDDRGID2 %in% antilipid |
+      Final_Data$RXDDRGID3 %in% antilipid |
+      Final_Data$RXDDRGID10 %in% antilipid |
+      Final_Data$RXDDRGID4 %in% antilipid |
+      Final_Data$RXDDRGID5 %in% antilipid |
+      Final_Data$RXDDRGID6 %in% antilipid |
+      Final_Data$RXDDRGID7 %in% antilipid |
+      Final_Data$RXDDRGID8 %in% antilipid |
+      Final_Data$RXDDRGID9 %in% antilipid |
+      Final_Data$RXDDRGID11 %in% antilipid |
+      Final_Data$RXDDRGID12 %in% antilipid |
+      Final_Data$RXDDRGID13 %in% antilipid |
+      Final_Data$RXDDRGID14 %in% antilipid |
+      Final_Data$RXDDRGID15 %in% antilipid |
+      Final_Data$RXDDRGID16 %in% antilipid |
+      Final_Data$RXDDRGID17 %in% antilipid |
+      Final_Data$RXDDRGID18 %in% antilipid, 1, 0)
+
+
+
+#########
+
+Final_Data <- Final_Data %>% 
+  mutate(CHOL_C = factor(
+    ifelse((LBXTC >= 240 | LBDLDL >= 160 | LBDHDD < 40 & LBDHDD >= 0 | ind_CHOLMED ==1),
+    "High Cholesterol", "No Cholesterol"), 
+    levels = c("High Cholesterol", "No Cholesterol")))
+
+## Fasting Glucose/Diabetes
+### Get glucose risk categories from the [CDC](https://www.mayoclinic.org/diseases-conditions/diabetes/diagnosis-treatment/drc-20371451)
+
+# correct the NAs in the diabetes variables that I need 
+Final_Data <- Final_Data  %>%
+  replace_with_na(replace = list(DIQ280 = c(777, 999)))
+
+Final_Data <- Final_Data  %>% 
+  replace_with_na(replace = list(DIQ010 = c(7, 9)))
+
+Final_Data$DIQ010 <- ifelse(Final_Data$DIQ010 == 2 | Final_Data$DIQ010 == 3, 2, 1)
+
+
+Final_Data$DIAB_test <- ifelse(is.na(Final_Data$DIQ280) & 
+                                 is.na(Final_Data$PHAFSTHR) & 
+                                 is.na(Final_Data$LBXGLU) & 
+                                 is.na(Final_Data$LBXGLT) & 
+                                 is.na(Final_Data$DIQ050) & 
+                                 is.na(Final_Data$DID070) & 
+                                 is.na(Final_Data$DIQ070) & 
+                                 is.na(Final_Data$DIQ010), 99, 0)
+
+Final_Data$DIAB_test1 <- ifelse((Final_Data$PHAFSTHR > 8 &
+                                 Final_Data$LBXGLU >= 126) | 
+                                (Final_Data$PHAFSTHR <= 8 & 
+                                 Final_Data$LBXGLU >= 200) | 
+                                 Final_Data$LBXGLT >= 200 | 
+                                 Final_Data$DIQ280 >= 6.5, 1, 0) ##lab results
+
+Final_Data$DIAB_test2 <- ifelse(Final_Data$DIQ010 == 1, 1, 0) # told diabetes by doctor, only 3 NAs
+
+Final_Data$DIAB_test3 <- ifelse(Final_Data$DIQ050 == 1 | 
+                                Final_Data$DID070 == 1 | 
+                                Final_Data$DIQ070 == 1, 1, 0) #diabetes med use
+
+Final_Data$DIAB_test4 <-
+  rowSums(cbind(as.numeric(Final_Data$DIAB_test),
+                as.numeric(Final_Data$DIAB_test1), 
+                as.numeric(Final_Data$DIAB_test2),
+                as.numeric(Final_Data$DIAB_test3)), na.rm = TRUE)
+
+Final_Data$DIAB_C <- ifelse(Final_Data$DIAB_test4 == 0, 0, 1)
+
+## BMI
+### Get adult risk categories [from the CDC](https://www.cdc.gov/healthyweight/assessing/bmi/adult_bmi/index.html) 
+Final_Data$BMI_C <- ifelse(Final_Data$BMXBMI >= 30, 1, 0)# non-obese -> 0, obese -> 1
+
+#waist circumference 
+Final_Data$WCM_C <- ifelse(Final_Data$BMXWAIST > 88 & 
+                           Final_Data$RIAGENDR == 2, 1,
+                           ifelse(Final_Data$BMXWAIST > 102 & 
+                                  Final_Data$RIAGENDR == 1, 1, 0))
+
+
+########### use this variable for in the analysis
+# new obesity variable with BMI for 20-44 and Waist circum 45-75
+Final_Data$OBS_C <- ifelse(Final_Data$RIDAGEYR < 45 & 
+                           Final_Data$BMI_C == 1 , 1, 
+                           ifelse(Final_Data$RIDAGEYR > 44 & 
+                                  Final_Data$WCM_C == 1, 1, 0))
+
+## Waist to hip ratio (not using)
+#Final_Data$WHR <- Final_Data$BMXWAIST/Final_Data$BMX
+
+#Final_Data$WHR_C <- ifelse(Final_Data$WHR > 88 &
+#                           Final_Data$RIAGENDR == 2, 1, 
+#                            ifelse(Final_Data$WHR > 102 & 
+#                                   Final_Data$RIAGENDR == 1, 1, 0))
+
+
+## Blood Pressure
+Final_Data$AVG_SYS <- rowMeans(subset(Final_Data, select = 
+                             c(BPXSY1, BPXSY2, BPXSY3, BPXSY4)), na.rm = TRUE)
+
+Final_Data$AVG_DIA <- rowMeans(subset(Final_Data, select = 
+                             c(BPXDI1, BPXDI2, BPXDI3, BPXDI4)), na.rm = TRUE)
+
+Final_Data <- Final_Data %>%
+  mutate(BP_C2 = factor(
+    case_when((AVG_SYS < 120 & AVG_DIA < 80) ~ "Normal/Elevated",                                        (AVG_SYS < 130 & AVG_SYS >= 120 & AVG_DIA < 80) ~ "Normal/Elevated",
+             ((AVG_SYS >= 130 & AVG_SYS < 180) | (AVG_DIA >= 80 & AVG_DIA < 120)) ~ "High/Crisis",(AVG_SYS >= 180 | AVG_DIA >= 120) ~ "High/Crisis"),
+              levels = c("Normal/Elevated", "High/Crisis")))
+
+# use this version--- it will be coded the same as hyper_treatment in HCHS/SOL 
+# HCHS/SOL defined hypertension as med use and/or >= 140/90 mm Hg
+
+Final_Data$HYPER_C <- ifelse((Final_Data$AVG_SYS >= 140 | 
+                              Final_Data$AVG_DIA >= 90 | 
+                              Final_Data$BPQ050A == 1 ), 1, 0)
+
+Final_Data$HYPER_C <- ifelse(is.na(Final_Data$HYPER_C) == TRUE, 0, Final_Data$HYPER_C)
+
+#BPQ050A - Now taking prescribed medicine for HBP
+
+# Create Heart Disease variable like CVD_Frame in HCHS/SOL 
+# CHD (coronary death, myocardial infarction, coronary insufficiency, and angina), cerebrovascular events (including ischemic stroke, hemorrhagic stroke, and transient ischemic attack), peripheral artery disease (intermittent claudication), and heart failure].  
+
+# MHEA3. Has a doctor ever said that you have angina? ---- yes MCQ160D
+# MHEA4. Has a doctor ever said that you have had a heart attack? ----- yes MCQ160E
+# MHEA5. Has a doctor ever said that you had heart failure? ---- yes MCQ160B
+# MHEA6. Has a doctor ever said that you had rheumatic heart disease?  ---- maybe MCQ160C
+# MHEA7. Has a doctor ever told you that you had atrial fibrillation? -- not in NHANES
+# MHEA8. Has a doctor ever said that you had some other kind of heart problem? -- no only for 99-04
+# MHEA9. Have you had a balloon angioplasty, a stent, or bypass surgery to the arteries in your heart to improve the blood flow to your heart? ---- no???
+# MHEA10. Has a doctor ever said that you had a stroke? ----- yes MCQ160F
+# MHEA11. Has a doctor ever said that you had a mini-stroke of TIA (transient ischemic attack)? --SPQ070d
+# MHEA12. Have you had a balloon angioplasty or surgery to the arteries of your neck to prevent or correct a stroke? --- OHQ146 but only from 99-04
+# MHEA13. Has a doctor ever said that you have an aortic aneurysm, an AAA, or ballooning of your aorta? ----- no
+# MHEA14. Has a doctor ever said that you have peripheral arterial disease (problems with circulation, blocked arteries to the legs)?----no
+# ABIGRP2_C4. 4-level grouped Ankle Brachial Index – v2
+# CLAUDICATION_INT. Intermittent Claudication - either leg
+# MI_ECG. MI defined by ECG results
+
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(MCQ160B = c(7,9)))
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(MCQ160C = c(7,9)))
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(MCQ160D = c(7,9)))
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(MCQ160E = c(7,9)))
+Final_Data <- Final_Data  %>% naniar::replace_with_na(replace = list(MCQ160F = c(7,9)))
+
+Final_Data <- Final_Data %>%
+  mutate(HD_C = factor(
+    case_when((MCQ160B == 1 |MCQ160C==1 |MCQ160D==1|MCQ160E==1|MCQ160F==1 ) ~ "Heart Disease", (MCQ160B != 1 |MCQ160C != 1 |MCQ160D!=1|MCQ160E!=1|MCQ160F!=1) ~ "No Heart Disease"), levels = c("Heart Disease", "No Heart Disease")))
+```
+
+
+
+```{r}
+
+#get cvd risk score 
+
+# use package from github
+#Calculate AHA/ACC 2013 ASCVD risk scores
+library(devtools)
+
+#install_github("vcastro/CVRisk")
+library(CVrisk)
+library(dplyr)
+library(survey)
+library(jtools)
+
+Final_Data$Sex <- factor(Final_Data$RIAGENDR, levels=c(1,2), labels=c("male", "female"))
+
+raceth <- c("Mexican","Other Hispanic", "NH White", "NH Black", "Other/Mixed")
+Final_Data$Race <- factor(Final_Data$RIDRETH1, levels=c(1:5), labels=raceth)
+
+
+Final_Data$bp_med <- Final_Data$BPQ050A
+Final_Data$bp_med[is.na(Final_Data$bp_med)] <- 0
+
+
+#Final_Data$Sex <- as.numeric(Final_Data$Sex)
+Final_Data$Race <- as.character(Final_Data$Race)
+Final_Data$SM_C <- as.numeric(Final_Data$SM_C)
+Final_Data$CHOL_C <- as.numeric(Final_Data$CHOL_C)
+Final_Data$DIAB_C <- as.numeric(Final_Data$DIAB_C)
+Final_Data$BMI_C <- as.numeric(Final_Data$BMI_C)
+Final_Data$bp_med <- as.numeric(Final_Data$bp_med)
+
+
+# find how many NAs
+#sapply(Final_Data[, c("RIDAGEYR", "Race","Sex","BMXBMI","AVG_SYS", "LBDHDD", "LBXTC", "BPQ050A",  "SM_C", "DIAB_C", "bp_med")], function(x) sum(is.na(x)))
+
+#Framingham 2008 ASCVD risk score = ascvd_10y_frs
+#Framingham 2008 ASCVD risk score simple (no lab) = ascvd_10y_frs_simple
+
+# this has a lot of missing because of the bp_med variable having a lot of missing data
+Final_Data_1 <- compute_CVrisk(Final_Data, scores="ascvd_10y_frs", age = "RIDAGEYR", race = "Race", gender ="Sex", bmi = "BMXBMI", sbp = "AVG_SYS", hdl = "LBDHDD", totchol = "LBXTC", bp_med = "bp_med", smoker = "SM_C", diabetes = "DIAB_C")
+
+
+```
+
+## Subset of dataset (no CVD)
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, out.width = "100%"}
+# excluding patients with cvd  
+
+nocvdpast <- subset(Final_Data_1, HD_C == "No Heart Disease") 
+
+```
+
+
+```{r}
+nocvdpast$RIAGENDR <- as.factor(nocvdpast$RIAGENDR)
+nocvdpast$RIDRETH1 <- as.factor(nocvdpast$RIDRETH1)
+nocvdpast$EDU_C <- as.factor(nocvdpast$EDU_C)
+nocvdpast$HSINC_C <- as.factor(nocvdpast$HSINC_C)
+nocvdpast$PPLHS_C <- as.factor(nocvdpast$PPLHS_C)
+nocvdpast$MS_C <- as.factor(nocvdpast$MS_C)
+nocvdpast$ALC_C <- as.factor(nocvdpast$ALC_C)
+nocvdpast$SM_C <- as.factor(nocvdpast$SM_C)
+nocvdpast$CHOL_C <- as.factor(nocvdpast$CHOL_C)
+nocvdpast$DIAB_C <- as.factor(nocvdpast$DIAB_C)
+nocvdpast$BMI_C <- as.factor(nocvdpast$BMI_C)
+```
+
+
+# Factor Analysis
+
+```{r, echo=FALSE}
+# Use the data labeled nocvdpast
+
+# variables needed in the dataset
+vars <- c("SEQN", "RIAGENDR","RIDAGEYR", "RIDRETH1", "SDMVPSU", "SDMVSTRA", "WTDIETC",  "EDU_C", "USBORNLEN_C", "PPLHS_C", "HSINC_C", "MS_C", "EMP_C", "ALC_C", "SM_C", "CHOL_C", "DIAB_C", "OBS_C", "HYPER_C","ascvd_10y_frs", "DR1TKCAL", "DR1TPROT", "DR1TCARB", "DR1TSUGR", "DR1TFIBE", "DR1TTFAT", "DR1TMFAT", "DR1TPFAT", "DR1TCHOL", "DR1TATOC", "DR1TRET",  "DR1TVARA", "DR1TACAR", "DR1TBCAR", "DR1TCRYP", "DR1TLYCO", "DR1TLZ",   "DR1TVB1", "DR1TVB2",  "DR1TNIAC", "DR1TVB6",  "DR1TFOLA", "DR1TVB12", "DR1TVC",  
+ "DR1TVD", "DR1TVK", "DR1TCALC", "DR1TPHOS", "DR1TMAGN", "DR1TIRON",
+ "DR1TZINC", "DR1TCOPP", "DR1TSODI", "DR1TPOTA", "DR1TSELE", "DR1TCAFF",
+ "DR1TS040", "D1_MCSFA", "D1_LCSFA")
+
+AnalysisData <- nocvdpast[ ,(names(nocvdpast) %in% vars)]
+
+numnames <- c("Total Protein (gm)", 
+ "Total Carbohydrate (gm)",  "Total Sugars (gm)",       
+ "Total Dietary Fiber (gm)", "Total Fat (gm)",          
+ "Total MUFA (gm)",          "Total PUFA (gm)",         
+ "Cholesterol (mg)",         "Vitamin E (mg)"  ,        
+ "Retinol (mcg)"    ,        "Vitamin A (mcg)"  ,       
+ "Alpha-Carotene (mcg)",     "Beta-Carotene (mcg)",     
+ "Beta-Cryptoxanthin (mcg)", "Lycopene (mcg)"      ,    
+ "Lutein+Zeaxanthin (mcg)" , "Vitamin B1 (mg)"      ,   
+ "Vitamin B2 (mg)"          ,"Niacin (mg)",             
+ "Vitamin B6 (mg)"          ,"Total Folate (mcg)",      
+ "Vitamin B12 (mcg)"        ,"Vitamin C (mg)"  ,        
+ "Vitamin D (mcg)"          ,"Vitamin K (mcg)" ,        
+ "Calcium (mg)"             ,"Phosphorus (mg)",         
+ "Magnesium (mg)"           ,"Iron (mg)" ,             
+ "Zinc (mg)"                ,"Copper (mg)" ,            
+ "Sodium (mg)"              ,"Potassium (mg)",          
+ "Selenium (mcg)"           ,"Caffeine (mg)",           
+ "SFA4 (gm)"                ,"MCSFA (gm)"  ,            
+ "LCSFA (gm)" )
+
+```
+
+
+
+```{r}
+# adjust for three cycles of NHANES data
+AnalysisData$WTDIETC <- AnalysisData$WTDIETC* 1/3
+
+# setting up the survey design
+survey_design <- survey::svydesign(id = ~SDMVPSU,
+                            strata = ~SDMVSTRA,
+                            weights = ~WTDIETC,
+                            nest = TRUE,
+                            data = AnalysisData)
+
+```
+
+
+```{r}
+#5 factors
+
+svyfact5 <-
+  survey::svyfactanal(
+    ~ DR1TPROT + DR1TCARB + DR1TSUGR + DR1TFIBE + DR1TTFAT + DR1TMFAT + DR1TPFAT +
+      DR1TCHOL + DR1TATOC + DR1TRET + DR1TVARA + DR1TACAR + DR1TBCAR + DR1TCRYP +
+      DR1TLYCO + DR1TLZ + DR1TVB1 + DR1TVB2 + DR1TNIAC + DR1TVB6 + DR1TFOLA +
+      DR1TVB12 + DR1TVC + DR1TVD + DR1TVK + DR1TCALC + DR1TPHOS + DR1TMAGN + DR1TIRON +
+      DR1TZINC + DR1TCOPP + DR1TSODI + DR1TPOTA + DR1TSELE + DR1TCAFF + DR1TS040 +
+      D1_MCSFA + D1_LCSFA,
+    design = survey_design,
+    factors = 5,
+    lower = 0.1
+  )
+
+
+comm_tot5 <-
+  matrix(apply(svyfact5$loadings[, 1:2], 1, function(x)
+    sum(x ^ 2)),
+    dim(AnalysisData[, 9:46])[2],
+    1) # save the commonality values
+
+svyfact_load5 <-
+  as.data.frame(cbind(svyfact5$loadings[, 1:5], comm_tot5)) #save into dataframe
+svyfact_load5$vars <- numnames # add variable name column
+svyfact_load5 <-
+  svyfact_load5[c(7, 1, 2, 3, 4, 5, 6)] # reorder the columns in dataframe
+
+
+fact5_scores <-
+  psych::factor.scores(AnalysisData[9:46], svyfact5$loadings, method = "Bartlett") # save the loading values and rotate
+
+```
+
+
+
+## Five Factor loadings
+
+```{r}
+# nutrients in factor 1
+five_f1 <- svyfact_load5$vars[which(svyfact_load5$Factor1 >= 0.6)]
+
+# nutrients in factor 2
+five_f2 <- svyfact_load5$vars[which(svyfact_load5$Factor2 >= 0.6)]
+
+# nutrients in factor 3
+five_f3 <- svyfact_load5$vars[which(svyfact_load5$Factor3 >= 0.6)]
+
+# nutrients in factor 4
+five_f4 <- svyfact_load5$vars[which(svyfact_load5$Factor4 >= 0.6)]
+
+# nutrients in factor 5
+five_f5 <- svyfact_load5$vars[which(svyfact_load5$Factor5 >= 0.6)]
+```
+
+
+
+### Heat map
+
+```{r}
+
+
+#creating a heatmap for five factors
+labs <- c( "Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5")
+
+library(RColorBrewer)
+coul <- colorRampPalette(brewer.pal(8, "Blues"))(25)
+
+heatmap(as.matrix(cbind(svyfact_load5[,2:6])), Colv = NA, Rowv = NA, scale="column",col= coul, labRow= numnames, labCol = "",add.expr = text(x = seq_along(labs), y = 0, srt = 0, labels = labs, xpd = TRUE), main = "NHANES (5 Factors)")
+
+
+# export to make a combined heat map
+
+#write.csv(svyfact_load5, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Factor Analysis/NHANES_5svyfactor_10.23.23.csv")
+
+```
+
+
+
+
+
+## Combine data and factor scores -- 5 factors
+
+```{r}
+# factor scores are added to the full dataframe
+Full_Data_5svyF <- cbind(AnalysisData, fact5_scores$scores)
+
+#save a csv file of the data if needed
+#write.csv(Full_Data_5svyF, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Factor Analysis/Full_Data_5svyF_10.23.23.csv")
+```
+
+
+
+### Cronbach's alpha
+
+```{r}
+# Survey weighted cronbach alpha - Nutrients ##
+
+#Create survey object for HCHS nutrient data
+nhanes.svynut <- svydesign(id = ~SDMVPSU,                      
+                      strata  = ~SDMVSTRA,                    
+                      weights = ~WTDIETC,                 
+                      nest    = TRUE,                      
+                      data    = AnalysisData)
+
+#scale nutrients within survey design 
+scale.svynut <-
+  gscale(
+    nhanes.svynut,
+    vars = c(
+      "DR1TPROT", "DR1TCARB", "DR1TSUGR", "DR1TFIBE",
+      "DR1TTFAT", "DR1TMFAT", "DR1TPFAT", "DR1TCHOL",
+      "DR1TATOC", "DR1TRET" , "DR1TVARA", "DR1TACAR",
+      "DR1TBCAR", "DR1TCRYP", "DR1TLYCO", "DR1TLZ",
+      "DR1TVB1" , "DR1TVB2" , "DR1TNIAC", "DR1TVB6",
+      "DR1TFOLA", "DR1TVB12", "DR1TVC"  , "DR1TVD",
+      "DR1TVK"  , "DR1TCALC", "DR1TPHOS", "DR1TMAGN",
+      "DR1TIRON", "DR1TZINC", "DR1TCOPP", "DR1TSODI",
+      "DR1TPOTA", "DR1TSELE", "DR1TCAFF", "DR1TS040",
+      "D1_MCSFA", "D1_LCSFA"))
+
+
+#Common factors from phif41_MSFA.xlsx - 16APR2021 all nutrients included
+allfac <-
+  svycralpha(
+    ~ DR1TPROT + DR1TCARB + DR1TSUGR + DR1TFIBE + DR1TTFAT + DR1TMFAT + DR1TPFAT +
+      DR1TCHOL + DR1TATOC + DR1TRET + DR1TVARA + DR1TACAR +
+      DR1TBCAR + DR1TCRYP + DR1TLYCO + DR1TLZ + DR1TVB1 + DR1TVB2 +
+      DR1TNIAC + DR1TVB6 + DR1TFOLA + DR1TVB12 + DR1TVC + DR1TVD +
+      DR1TVK + DR1TCALC + DR1TPHOS + DR1TMAGN + DR1TIRON + DR1TZINC +
+      DR1TCOPP + DR1TSODI + DR1TPOTA + DR1TSELE + DR1TCAFF + DR1TS040 + D1_MCSFA +
+      D1_LCSFA,
+    scale.svynut) 
+
+#leave one out alpha
+alpha.itemout <- function(a) {
+  len <- dim(a)[1]
+  a_out <- rep(NA, len)
+  for (i in 1:len) {
+    redmat <- a[-i, -i]
+    cbar <- mean(redmat[lower.tri(redmat)])
+    vbar <- mean(diag(redmat))
+    a_outnum <- (len * cbar)
+    a_outdem <- vbar + (len - 1) * cbar
+    a_out[i] <- a_outnum / a_outdem
+  }
+  print(a_out)
+}
+  
+  
+#Step 1 - create covariance matrix
+var.out <-
+  svyvar(
+    ~ DR1TPROT + DR1TCARB + DR1TSUGR + DR1TFIBE + DR1TTFAT + DR1TMFAT + DR1TPFAT +
+      DR1TCHOL + DR1TATOC + DR1TRET + DR1TVARA + DR1TACAR + DR1TBCAR +
+      DR1TCRYP + DR1TLYCO + DR1TLZ + DR1TVB1 + DR1TVB2 +
+      DR1TNIAC + DR1TVB6 + DR1TFOLA + DR1TVB12 + DR1TVC + DR1TVD +
+      DR1TVK + DR1TCALC + DR1TPHOS + DR1TMAGN + DR1TIRON + DR1TZINC +
+      DR1TCOPP + DR1TSODI + DR1TPOTA + DR1TSELE + DR1TCAFF + DR1TS040 + D1_MCSFA +
+      D1_LCSFA,
+    scale.svynut)
+
+covmat <- as.matrix(var.out)
+
+fullvec <- alpha.itemout(covmat)
+
+overall_alpha <- as.data.frame(cbind(nutr = c("Overall", numnames), val = round(c(allfac, fullvec), 3)), row.names = F)
+```
+
+
+```{r}
+################################################
+# 5 factors, compute Cronbach alpha for each factor
+################################################
+
+#rownames(svyfact_load5[which(svyfact_load5$Factor1 >= 0.4),])
+#only include nutrients with at least 0.4 in phi_41 - factor 1
+bay.5fac1 <- svycralpha(
+  ~ DR1TPROT + DR1TCHOL + DR1TVB1 + DR1TVB2 + DR1TNIAC +
+    DR1TVB6 + DR1TFOLA + DR1TVB12 + DR1TVD + DR1TPHOS +
+    DR1TMAGN + DR1TIRON + DR1TZINC +
+    DR1TCOPP + DR1TSODI + DR1TPOTA + DR1TSELE,
+  scale.svynut)
+
+fac1_5.var <- svyvar(
+  ~ DR1TPROT + DR1TCHOL + DR1TVB1 + DR1TVB2 + DR1TNIAC +
+    DR1TVB6 + DR1TFOLA + DR1TVB12 + DR1TVD + DR1TPHOS +
+    DR1TMAGN + DR1TIRON + DR1TZINC +
+    DR1TCOPP + DR1TSODI + DR1TPOTA + DR1TSELE,
+  scale.svynut)
+
+fac1_5.cov <- as.matrix(fac1_5.var)
+fac1_5.alpha <- alpha.itemout(fac1_5.cov)
+
+fact1_5alpha <-
+  as.data.frame(cbind(nutr = c("Overall", numnames[which(svyfact_load5$Factor1 >= 0.4)]), val = round(c(bay.5fac1, fac1_5.alpha), 3)), row.names = F)
+
+#rownames(svyfact_load5[which(svyfact_load5$Factor2 >= 0.4),])
+#only include nutrients with at least 0.4 in phi_41 - factor 2
+fac2_5 <-
+  svycralpha(
+    ~ DR1TPROT + DR1TTFAT + DR1TMFAT + DR1TPFAT + DR1TCHOL + DR1TATOC + DR1TPHOS +
+      DR1TZINC + DR1TSODI + DR1TSELE + D1_LCSFA,
+    scale.svynut)
+
+
+fac2_5.var <-
+  as.matrix(
+    svyvar(
+      ~ DR1TPROT + DR1TTFAT + DR1TMFAT + DR1TPFAT + DR1TCHOL + DR1TATOC + DR1TPHOS +
+        DR1TZINC + DR1TSODI + DR1TSELE + D1_LCSFA,
+      scale.svynut))
+
+fac2_5.alpha <- alpha.itemout(fac2_5.var)
+
+fact2_5alpha <-
+  as.data.frame(cbind(nutr = c("Overall", numnames[which(svyfact_load5$Factor2 >= 0.4)]), val = round(c(fac2_5, fac2_5.alpha), 3)), row.names = F)
+
+
+#rownames(svyfact_load5[which(svyfact_load5$Factor3 >= 0.4),])
+#only include nutrients with at least 0.4 in phi_41 - factor 3
+fac3_5 <-
+  svycralpha(
+    ~ DR1TCARB + DR1TSUGR + DR1TFIBE + DR1TATOC + DR1TVB1 + DR1TFOLA + DR1TCALC +
+      DR1TPHOS + DR1TMAGN + DR1TIRON + DR1TCOPP + DR1TPOTA,
+    scale.svynut)
+
+fac3_5.var <-
+  as.matrix(
+    svyvar(
+      ~ DR1TCARB + DR1TSUGR + DR1TFIBE + DR1TATOC + DR1TVB1 + DR1TFOLA + DR1TCALC +
+        DR1TPHOS + DR1TMAGN + DR1TIRON + DR1TCOPP + DR1TPOTA,
+      scale.svynut))
+
+fac3_5.alpha <- alpha.itemout(fac3_5.var)
+
+fact3_5alpha <-
+  as.data.frame(cbind(nutr = c("Overall", numnames[which(svyfact_load5$Factor3 >= 0.4)]), val = round(c(fac3_5, fac3_5.alpha), 3)), row.names = F)
+
+
+#rownames(svyfact_load5[which(svyfact_load5$Factor4 >= 0.4),])
+#only include nutrients with at least 0.4 in phi_41 - factor 4
+fac4_5 <-
+  svycralpha(
+    ~ DR1TRET + DR1TVARA + DR1TVB2 + DR1TVB12 + DR1TVD + DR1TCALC + DR1TS040 +
+      D1_MCSFA + D1_LCSFA,
+    scale.svynut)
+
+fac4_5.var <-
+  as.matrix(
+    svyvar(
+      ~ DR1TRET + DR1TVARA + DR1TVB2 + DR1TVB12 + DR1TVD + DR1TCALC + DR1TS040 +
+        D1_MCSFA + D1_LCSFA,
+      scale.svynut))
+
+fac4_5.alpha <- alpha.itemout(fac4_5.var)
+
+fact4_5alpha <-
+  as.data.frame(cbind(nutr = c("Overall", numnames[which(svyfact_load5$Factor4 >= 0.4)]), val = round(c(fac4_5, fac4_5.alpha), 3)), row.names = F)
+
+
+#rownames(svyfact_load5[which(svyfact_load5$Factor5 >= 0.4),])
+#only include nutrients with at least 0.4 in phi_41 - factor 5
+fac5_5 <-
+  svycralpha(
+    ~ DR1TATOC + DR1TVARA + DR1TACAR + DR1TBCAR + DR1TCRYP + DR1TLZ + DR1TVC +
+      DR1TVK + DR1TPOTA,
+    scale.svynut)
+
+fac5_5.var <-
+  as.matrix(
+    svyvar(
+      ~ DR1TATOC + DR1TVARA + DR1TACAR + DR1TBCAR + DR1TCRYP + DR1TLZ + DR1TVC +
+        DR1TVK + DR1TPOTA,
+      scale.svynut))
+
+fac5_5.alpha <- alpha.itemout(fac5_5.var)
+
+fact5_5alpha <-
+  as.data.frame(cbind(nutr = c("Overall", numnames[which(svyfact_load5$Factor5 >= 0.4)]), val = round(c(fac5_5, fac5_5.alpha), 3)), row.names = F)
+
+
+### Table of Cronbach's alpha
+
+alpha_5 <- list(overall_alpha, fact1_5alpha, fact2_5alpha, fact3_5alpha, fact4_5alpha, fact5_5alpha) %>% purrr::reduce(dplyr::left_join, by = "nutr")
+
+colnames(alpha_5) <- c("Nutrient","Overall", "Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5")
+
+#write.csv(alpha_5, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/NHANES/NHANES_5svyfactor_Cronbachs_10.23.23.csv")
+```
+
+# Descriptive Analysis
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# use data labeled Full_Data_5svyF
+
+vars <-
+  c(
+    "SEQN",
+    "RIAGENDR",
+    "RIDAGEYR",
+    "RIDRETH1",
+    "SDMVPSU",
+    "SDMVSTRA",
+    "WTDIETC",
+    "EDU_C",
+    "USBORNLEN_C",
+    "PPLHS_C",
+    "HSINC_C",
+    "MS_C",
+    "EMP_C",
+    "ALC_C",
+    "SM_C",
+    "CHOL_C",
+    "DIAB_C",
+    "OBS_C",
+    "ascvd_10y_frs",
+    "HYPER_C",
+    "DR1TKCAL",
+    "DR1TPROT",
+    "DR1TCARB",
+    "DR1TSUGR",
+    "DR1TFIBE",
+    "DR1TTFAT",
+    "DR1TMFAT",
+    "DR1TPFAT",
+    "DR1TCHOL",
+    "DR1TATOC",
+    "DR1TRET",
+    "DR1TVARA",
+    "DR1TACAR",
+    "DR1TBCAR",
+    "DR1TCRYP",
+    "DR1TLYCO",
+    "DR1TLZ",
+    "DR1TVB1",
+    "DR1TVB2",
+    "DR1TNIAC",
+    "DR1TVB6",
+    "DR1TFOLA",
+    "DR1TVB12",
+    "DR1TVC",
+    "DR1TVD",
+    "DR1TVK",
+    "DR1TCALC",
+    "DR1TPHOS",
+    "DR1TMAGN",
+    "DR1TIRON",
+    "DR1TZINC",
+    "DR1TCOPP",
+    "DR1TSODI",
+    "DR1TPOTA",
+    "DR1TSELE",
+    "DR1TCAFF",
+    "DR1TS040",
+    "D1_MCSFA",
+    "D1_LCSFA",
+    "Factor1",
+    "Factor2",
+    "Factor3",
+    "Factor4",
+    "Factor5"
+  )
+
+variables <- c("ID", "Sex", "Age (yrs)", "Ethnicity/Race", "PSU", "Strata", "Weights", "Education", "Born Length", "Ppl in Household", "Household Income", "Marital Status", "Employment", "Alcohol status", "Smoking status", "Cholesterol", "Diabetes", "Obesity", "Hypertension","Fram_score", "Energy (kcal)", "Total Protein (gm)", "Total Carbohydrate (gm)", "Total Sugars (gm)", "Total Dietary Fiber (gm)", "Total Fat (gm)", "Total MUFA (gm)", "Total PUFA (gm)", "Cholesterol (mg)", "Vitamin E (mg)", "Retinol (mcg)", "Vitamin A (mcg)", "Alpha-Carotene (mcg)", "Beta-Carotene (mcg)", "Beta-Cryptoxanthin (mcg)", "Lycopene (mcg)", "Lutein+Zeaxanthin (mcg)", "Vitamin B1 (mg)", "Vitamin B2 (mg)", "Niacin (mg)", "Vitamin B6 (mg)", "Total Folate (mcg)", "Vitamin B12 (mcg)", "Vitamin C (mg)", "Vitamin D (mcg)", "Vitamin K (mcg)", "Calcium (mg)", "Phosphorus (mg)", "Magnesium (mg)", "Iron (mg)", "Zinc (mg)", "Copper (mg)", "Sodium (mg)", "Potassium (mg)", "Selenium (mcg)", "Caffeine (mg)", "SFA4 (butyric acid) (gm)", "MCSFA (gm)", "LCSFA (gm)", "Factor1", "Factor2", "Factor3", "Factor4", "Factor5")
+
+TableData <- Full_Data_5svyF[,(names(Full_Data_5svyF) %in% vars)]
+AnalysisData <- Full_Data_5svyF[,(names(Full_Data_5svyF) %in% vars)]
+
+
+# table of demographics and cvd risk factors
+# want to make table pretty
+
+TableData$RIAGENDR <- ifelse(TableData$RIAGENDR == 2, "Female", "Male")
+TableData$RIDRETH1 <- ifelse(TableData$RIDRETH1 == 2, "Other Hispanic", "Mexican")
+TableData$EDU_C <- ifelse(TableData$EDU_C == 1, "Less than HS", ifelse(TableData$EDU_C ==2, "HS Diploma", "More than HS"))
+TableData$USBORNLEN_C <- ifelse(TableData$USBORNLEN_C == "BORNUS", "Born in the US", ifelse(TableData$USBORNLEN_C =="Less10", "Less than 11 years", "More than 10 years"))
+TableData$PPLHS_C <- ifelse(TableData$PPLHS_C == 2, "2 or more people", "Less than 2 people")
+TableData$MS_C <- ifelse(TableData$MS_C == 1, "Married", "Unmarried")
+TableData$SM_C <- ifelse(TableData$SM_C == 1, "Smoker", "Non-smoker")
+TableData$CHOL_C <- ifelse(TableData$CHOL_C == 1, "Yes", "No")
+TableData$DIAB_C <- ifelse(TableData$DIAB_C == 1, "Yes", "No")
+TableData$OBS_C <- ifelse(TableData$OBS_C == 1, "Yes", "No")
+TableData$HYPER_C <- ifelse(TableData$HYPER_C == 1, "Yes", "No")
+
+
+TableData$RIAGENDR <- as.factor(TableData$RIAGENDR)
+TableData$RIDRETH1 <- as.factor(TableData$RIDRETH1)
+TableData$EDU_C <- as.factor(TableData$EDU_C)
+TableData$USBORNLEN_C <- as.factor(TableData$USBORNLEN_C)
+TableData$PPLHS_C <- as.factor(TableData$PPLHS_C)
+TableData$HSINC_C <- as.factor(TableData$HSINC_C)
+TableData$MS_C <- as.factor(TableData$MS_C)
+TableData$EMP_C <- as.factor(TableData$EMP_C)
+TableData$ALC_C <- as.factor(TableData$ALC_C)
+TableData$SM_C <- as.factor(TableData$SM_C)
+TableData$CHOL_C <- as.factor(TableData$CHOL_C)
+TableData$DIAB_C <- as.factor(TableData$DIAB_C)
+TableData$OBS_C <- as.factor(TableData$OBS_C)
+TableData$HYPER_C <- as.factor(TableData$HYPER_C)
+
+
+```
+
+
+```{r, echo=FALSE}
+# setting up the survey design for the table 
+survey_design <- survey::svydesign(id = ~SDMVPSU,
+                            strata = ~SDMVSTRA,
+                            weights = ~WTDIETC,
+                            nest = TRUE,
+                            data = TableData)
+
+demovars <- c("RIAGENDR","RIDAGEYR","DR1TKCAL", "RIDRETH1","EDU_C", "USBORNLEN_C", "PPLHS_C", "HSINC_C", "MS_C", "EMP_C", "ALC_C", "SM_C", "CHOL_C", "DIAB_C", "OBS_C", "HYPER_C","ascvd_10y_frs" )
+
+```
+
+
+## Demographics Table (Age Adjusted)
+
+```{r, echo=FALSE}
+# using this example to derive age adjusted summaries
+#https://github.com/mlaviolet/Survey-data-analysis/blob/master/age-adjusted-prevalence.R
+# use svystandardize to age adjust and new package srvyr 
+
+# https://seer.cancer.gov/stdpopulations/stdpop.singleages.html to get population numbesr
+pop4 <- c(40376, 37648, 35557, 34892, 34099, 34211, 33282, 34350, 34506, 40872, 39990, 38102, 37744,38409, 40869, 42881, 43496, 44695, 42902, 47826, 46667, 44936, 44876, 44240, 44074, 42680,40339, 39585, 36815, 38640, 37209, 35043, 34757, 37542, 27692, 27497, 27868, 29475, 24045,24188, 22591, 21798, 21329, 20307, 20518, 20339, 18621, 18499, 17888, 18752, 18431, 17847,18021, 16743, 16214)
+
+# setting up the adjusted survey design
+age_adj <- svystandardize(
+  survey_design,
+  by = ~ RIDAGEYR,
+  over = ~ 1,
+  population = pop4
+) 
+
+##########################
+#compute the mean using svymean with individual variable
+
+scsloop <- function(vars, design){ 
+svymean(as.formula(paste0( "~" ,vars)) ,design ,na=T)}
+
+xmeans2 <- lapply(demovars, scsloop, age_adj)
+
+tab1_adj <- plyr::ldply(xmeans2, data.frame)
+tab1_adj [3,2] <- tab1_adj [3,3]
+tab1_adj [4,2] <- tab1_adj [4,4]
+tab1_adj [36,2] <- tab1_adj [36,5]
+
+tab1_adj <- tab1_adj[1:36, 1:2]
+
+RN_1 <- NULL
+for(i in 1:17){
+  RN_1 <- c(RN_1, names(xmeans2[[i]]))
+}
+
+rownames(tab1_adj) <- RN_1
+blank <- rep("", 36)
+
+#add a column with demo categories
+rowname <- c("Female", "Male", "Age (yrs)", "Energy (kcal)", "Mexican", "Other Hispanic", "HS Diploma/GED", "< HS DiplomaGED", "> HS DiplomaGED", "Born in the US", "<= 10 years", "> 10 years", "2 or more people", "Less than 2 people", "$25,000-$75,000", "< $25,000", "> $75,000", "Married", "Unmarried", "Employed", "Retired", "Unemployed", "Current", "Former", "Never", "Non-smoker", "Smoker", "No", "Yes", "No", "Yes", "No", "Yes", "No", "Yes","Risk Score")
+
+table1_adj <- cbind(blank, rowname, tab1_adj)
+
+table1_adj[,3:4] <- round(table1_adj[,3:4],4)*100
+
+#write.csv(table1_adj, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Descriptive Analysis/NHANES_DEMO_table_10.23.23.csv")
+
+```
+
+
+
+## Nutrition Table (Age,Sex, Energy Adjusted)
+
+
+```{r, echo=FALSE}
+
+###### using svyglm to get means of adjusted nutrient values
+nutrvars <- vars[22:59]
+
+geo_mean <- matrix(NA, length(nutrvars), 3)
+
+for(i in 1:length(nutrvars)){
+  mod1 <- svyglm(as.formula(paste0(nutrvars[i], "~" ,"RIDAGEYR + RIAGENDR + DR1TKCAL")), survey_design)
+  mean_nutr <- as.data.frame(predict(mod1))
+  geom <- as.data.frame(exp(mean_nutr$link))
+  geo_mean[i,1] <- mean(geom$`exp(mean_nutr$link)`, na.rm=T)
+  LC <- exp(mean_nutr$link - 1.96 * mean_nutr$SE)
+  UC <- exp(mean_nutr$link + 1.96 * mean_nutr$SE)
+
+  geo_mean[i,2] <- mean(LC)
+  geo_mean[i,3] <- mean(UC)
+
+}
+
+geo_mean <- round(geo_mean, 1)
+
+
+tab2_glm_adj_geo <- as.data.frame(paste0(geo_mean[,1], " (" ,geo_mean[,2], ", ", geo_mean[,3], ")"))
+
+
+#write.csv(tab2_glm_adj_geo, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Descriptive Analysis/NHANES_NUTR_table_10.23.23.csv")
+```
+
+
+
+## Quintiles using survey quantile
+
+```{r, echo=FALSE}
+
+# Creating quintiles of the factor loadings
+# factor 1
+fac1 <- svyquantile( ~ Factor1, survey_design, c(.2, .4, .6, .8))
+fac1.quints <- fac1$Factor1[1:4, 1]
+AnalysisData$fac1_cat <-
+  ifelse(AnalysisData$Factor1 <= fac1.quints[1], 1,
+    ifelse(AnalysisData$Factor1 > fac1.quints[1] &
+            AnalysisData$Factor1 < fac1.quints[2], 2,
+      ifelse(AnalysisData$Factor1 >= fac1.quints[2] &
+              AnalysisData$Factor1 < fac1.quints[3], 3,
+        ifelse(AnalysisData$Factor1 >= fac1.quints[3] &
+               AnalysisData$Factor1 < fac1.quints[4], 4,
+          ifelse(AnalysisData$Factor1 >= fac1.quints[4], 5, NA)))))
+
+AnalysisData$fac1_cat <-
+  factor(AnalysisData$fac1_cat,
+         c(1:5),
+         labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))
+TableData$fac1_cat <- AnalysisData$fac1_cat
+
+#factor 2
+fac2 <- svyquantile( ~ Factor2, survey_design, c(.2, .4, .6, .8))
+fac2.quints <- fac2$Factor2[1:4, 1]
+AnalysisData$fac2_cat <-
+  ifelse(AnalysisData$Factor2 <= fac2.quints[1], 1,
+    ifelse(AnalysisData$Factor2 > fac2.quints[1] &
+            AnalysisData$Factor2 < fac2.quints[2], 2,
+      ifelse(AnalysisData$Factor2 >= fac2.quints[2] &
+              AnalysisData$Factor2 < fac2.quints[3], 3,
+        ifelse(AnalysisData$Factor2 >= fac2.quints[3] &
+                AnalysisData$Factor2 < fac2.quints[4], 4,
+          ifelse(AnalysisData$Factor2 >= fac2.quints[4], 5, NA)))))
+
+AnalysisData$fac2_cat <-
+  factor(AnalysisData$fac2_cat,
+         c(1:5),
+         labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))
+TableData$fac2_cat <- AnalysisData$fac2_cat
+
+
+#factor 3
+fac3 <- svyquantile( ~ Factor3, survey_design, c(.2, .4, .6, .8))
+fac3.quints <- fac3$Factor3[1:4, 1]
+AnalysisData$fac3_cat <-
+  ifelse(AnalysisData$Factor3 <= fac3.quints[1], 1,
+    ifelse(AnalysisData$Factor3 > fac3.quints[1] &
+            AnalysisData$Factor3 < fac3.quints[2], 2,
+      ifelse(AnalysisData$Factor3 >= fac3.quints[2] &
+              AnalysisData$Factor3 < fac3.quints[3], 3,
+        ifelse(AnalysisData$Factor3 >= fac3.quints[3] &
+                AnalysisData$Factor3 < fac3.quints[4], 4,
+          ifelse(AnalysisData$Factor3 >= fac3.quints[4], 5, NA)))))
+
+AnalysisData$fac3_cat <-
+  factor(AnalysisData$fac3_cat,
+         c(1:5),
+         labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))
+
+TableData$fac3_cat <- AnalysisData$fac3_cat
+
+
+#factor 4
+fac4 <- svyquantile( ~ Factor4, survey_design, c(.2, .4, .6, .8))
+fac4.quints <- fac4$Factor4[1:4, 1]
+AnalysisData$fac4_cat <-
+  ifelse(AnalysisData$Factor4 <= fac4.quints[1], 1,
+    ifelse(AnalysisData$Factor4 > fac4.quints[1] &
+            AnalysisData$Factor4 < fac4.quints[2], 2,
+      ifelse(AnalysisData$Factor4 >= fac4.quints[2] &
+              AnalysisData$Factor4 < fac4.quints[3], 3,
+        ifelse(AnalysisData$Factor4 >= fac4.quints[3] &
+                AnalysisData$Factor4 < fac4.quints[4], 4,
+          ifelse(AnalysisData$Factor4 >= fac4.quints[4], 5, NA)))))
+
+AnalysisData$fac4_cat <-
+  factor(AnalysisData$fac4_cat,
+         c(1:5),
+         labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))
+
+TableData$fac4_cat <- AnalysisData$fac4_cat
+
+
+#factor 5
+fac5 <- svyquantile( ~ Factor5, survey_design, c(.2, .4, .6, .8))
+fac5.quints <- fac5$Factor5[1:4, 1]
+AnalysisData$fac5_cat <-
+  ifelse(AnalysisData$Factor5 <= fac5.quints[1], 1,
+    ifelse(AnalysisData$Factor5 > fac5.quints[1] &
+            AnalysisData$Factor5 < fac5.quints[2], 2,
+      ifelse(AnalysisData$Factor5 >= fac5.quints[2] &
+              AnalysisData$Factor5 < fac5.quints[3], 3,
+        ifelse(AnalysisData$Factor5 >= fac5.quints[3] &
+                AnalysisData$Factor5 < fac5.quints[4], 4,
+          ifelse(AnalysisData$Factor5 >= fac5.quints[4], 5, NA)))))
+
+AnalysisData$fac5_cat <-
+  factor(AnalysisData$fac5_cat,
+         c(1:5),
+         labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))
+
+TableData$fac5_cat <- AnalysisData$fac5_cat
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# setting up the survey design
+survey_design_Fortable <- survey::svydesign(
+  id = ~ SDMVPSU,
+  strata = ~ SDMVSTRA,
+  weights = ~ WTDIETC,
+  nest = TRUE,
+  data = TableData)
+
+#Demographic Variables from Table 1
+  #FACTOR 1 - COMMON
+tab_f1 <-
+  as.data.frame(
+    svyby(
+      ~ RIAGENDR + RIDAGEYR + DR1TKCAL + RIDRETH1 + EDU_C + USBORNLEN_C + PPLHS_C +
+        HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + HYPER_C +
+        ascvd_10y_frs,
+      ~ fac1_cat,
+      survey_design_Fortable,
+      svymean,
+      na.rm = TRUE))
+
+tab_f1 <- as.data.frame(t(tab_f1))
+
+tab_f1$Q1 <-as.numeric(as.character(tab_f1$Q1))
+tab_f1$Q2 <-as.numeric(as.character(tab_f1$Q2))
+tab_f1$Q3 <-as.numeric(as.character(tab_f1$Q3))
+tab_f1$Q4 <-as.numeric(as.character(tab_f1$Q4))
+tab_f1$Q5 <-as.numeric(as.character(tab_f1$Q5))
+
+
+#FACTOR 2 - COMMON
+tab_f2 <-
+  svyby(
+    ~ RIAGENDR + RIDAGEYR + DR1TKCAL + RIDRETH1 + EDU_C + USBORNLEN_C + PPLHS_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + HYPER_C +
+      ascvd_10y_frs,
+    ~ fac2_cat,
+    survey_design_Fortable,
+    svymean,
+    na.rm = TRUE)
+
+tab_f2 <- as.data.frame(t(tab_f2))
+
+tab_f2$Q1 <-as.numeric(as.character(tab_f2$Q1))
+tab_f2$Q2 <-as.numeric(as.character(tab_f2$Q2))
+tab_f2$Q3 <-as.numeric(as.character(tab_f2$Q3))
+tab_f2$Q4 <-as.numeric(as.character(tab_f2$Q4))
+tab_f2$Q5 <-as.numeric(as.character(tab_f2$Q5))
+
+#FACTOR 3- COMMON
+tab_f3 <-
+  svyby(
+    ~ RIAGENDR + RIDAGEYR + DR1TKCAL + RIDRETH1 + EDU_C + USBORNLEN_C + PPLHS_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + HYPER_C +
+      ascvd_10y_frs,
+    ~ fac3_cat,
+    survey_design_Fortable,
+    svymean,
+    na.rm = TRUE)
+
+tab_f3 <- as.data.frame(t(tab_f3))
+
+tab_f3$Q1 <-as.numeric(as.character(tab_f3$Q1))
+tab_f3$Q2 <-as.numeric(as.character(tab_f3$Q2))
+tab_f3$Q3 <-as.numeric(as.character(tab_f3$Q3))
+tab_f3$Q4 <-as.numeric(as.character(tab_f3$Q4))
+tab_f3$Q5 <-as.numeric(as.character(tab_f3$Q5))
+
+#FACTOR 4 - COMMON
+tab_f4 <-
+  svyby(
+    ~ RIAGENDR + RIDAGEYR + DR1TKCAL + RIDRETH1 + EDU_C + USBORNLEN_C + PPLHS_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + HYPER_C +
+      ascvd_10y_frs,
+    ~ fac4_cat,
+    survey_design_Fortable,
+    svymean,
+    na.rm = TRUE)
+
+tab_f4 <- as.data.frame(t(tab_f4))
+
+tab_f4$Q1 <-as.numeric(as.character(tab_f4$Q1))
+tab_f4$Q2 <-as.numeric(as.character(tab_f4$Q2))
+tab_f4$Q3 <-as.numeric(as.character(tab_f4$Q3))
+tab_f4$Q4 <-as.numeric(as.character(tab_f4$Q4))
+tab_f4$Q5 <-as.numeric(as.character(tab_f4$Q5))
+
+#FACTOR 5 - COMMON
+tab_f5 <-
+  svyby(
+    ~ RIAGENDR + RIDAGEYR + DR1TKCAL + RIDRETH1 + EDU_C + USBORNLEN_C + PPLHS_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + HYPER_C +
+      ascvd_10y_frs,
+    ~ fac5_cat,
+    survey_design_Fortable,
+    svymean,
+    na.rm = TRUE)
+
+tab_f5 <- as.data.frame(t(tab_f5))
+
+tab_f5$Q1 <-as.numeric(as.character(tab_f5$Q1))
+tab_f5$Q2 <-as.numeric(as.character(tab_f5$Q2))
+tab_f5$Q3 <-as.numeric(as.character(tab_f5$Q3))
+tab_f5$Q4 <-as.numeric(as.character(tab_f5$Q4))
+tab_f5$Q5 <-as.numeric(as.character(tab_f5$Q5))
+```
+
+```{r, echo=FALSE}
+
+table <- cbind.data.frame(
+  Q1f1m = tab_f1[c(2:37), 1],
+  Q1f1se = tab_f1[c(38:73), 1],
+  Q5f1m = tab_f1[c(2:37), 5],
+  Q5f1se = tab_f1[c(38:73), 5],
+  Q1f2m = tab_f2[c(2:37), 1],
+  Q1f2se = tab_f2[c(38:73), 1],
+  Q5f2m = tab_f2[c(2:37), 5],
+  Q5f2se = tab_f2[c(38:73), 5],
+  Q1f3m = tab_f3[c(2:37), 1],
+  Q1f3se = tab_f3[c(38:73), 1],
+  Q5f3m = tab_f3[c(2:37), 5],
+  Q5f3se = tab_f3[c(38:73), 5],
+  Q1f4m = tab_f4[c(2:37), 1],
+  Q1f4se = tab_f4[c(38:73), 1],
+  Q5f4m = tab_f4[c(2:37), 5],
+  Q5f4se = tab_f4[c(38:73), 5],
+  Q1f5m = tab_f5[c(2:37), 1],
+  Q1f5se = tab_f5[c(38:73), 1],
+  Q5f5m = tab_f5[c(2:37), 5],
+  Q5f5se = tab_f5[c(38:73), 5])
+
+rownames(table) <- row.names(tab_f1)[2:37]
+table <- round(table, 3) * 100
+
+#write.csv(table, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Descriptive Analysis/NHANES_DEMO_quintiletable_10.23.23.csv")
+```
+
+# Regression Analysis
+
+```{r}
+# remove everything except data 
+#rm(list=setdiff(ls(), "AnalysisData"))
+# use AnalysisData
+```
+
+```{r, echo=FALSE}
+# Need to re-level and categorize the  variables 
+
+AnalysisData$USBORNLEN_C <-
+  ifelse(AnalysisData$USBORNLEN_C == "BORNUS", 3,
+    ifelse(AnalysisData$USBORNLEN_C == "Less10", 1, 2))
+
+AnalysisData$HSINC_C <-
+  ifelse(AnalysisData$HSINC_C == "Less than $25,000", 1,
+    ifelse(AnalysisData$HSINC_C == "$25,000-$75,000", 2, 3))
+
+AnalysisData$MS_C <-
+  ifelse(AnalysisData$MS_C == 1, 2, 1) # 2 is unmarried
+
+AnalysisData$EMP_C <-
+  ifelse(AnalysisData$EMP_C == "Unemployed", 1,
+    ifelse(AnalysisData$EMP_C == "Retired", 2, 3))
+
+AnalysisData$ALC_C <-
+  ifelse(AnalysisData$ALC_C == "Current", 1,
+    ifelse(AnalysisData$ALC_C == "Former", 2, 3))
+
+AnalysisData$SM_C <- ifelse(AnalysisData$SM_C == 1, 1, 2)
+AnalysisData$OBS_C <- ifelse(AnalysisData$OBS_C == 1, 1, 2)
+AnalysisData$HYPER_C <- ifelse(AnalysisData$HYPER_C == 1, 1, 2)
+AnalysisData$DIAB_C <- ifelse(AnalysisData$DIAB_C == 1, 1, 2)
+
+# make sure factor variables are specified using as.factor
+AnalysisData$RIAGENDR <- as.factor(AnalysisData$RIAGENDR)
+AnalysisData$RIDRETH1 <- as.factor(AnalysisData$RIDRETH1)
+AnalysisData$EMP_C <- as.factor(AnalysisData$EMP_C)
+AnalysisData$EDU_C <- as.factor(AnalysisData$EDU_C)
+AnalysisData$MS_C <- as.factor(AnalysisData$MS_C)
+AnalysisData$SM_C <- as.factor(AnalysisData$SM_C)
+AnalysisData$ALC_C <- as.factor(AnalysisData$ALC_C)
+AnalysisData$HSINC_C <- as.factor(AnalysisData$HSINC_C)
+AnalysisData$USBORNLEN_C <- as.factor(AnalysisData$USBORNLEN_C)
+AnalysisData$CHOL_C <- as.factor(AnalysisData$CHOL_C)
+AnalysisData$OBS_C <- as.factor(AnalysisData$OBS_C)
+AnalysisData$HYPER_C <- as.factor(AnalysisData$HYPER_C)
+AnalysisData$DIAB_C <- as.factor(AnalysisData$DIAB_C)
+
+# relevel to have the preferred reference level
+AnalysisData$RIAGENDR <- relevel(AnalysisData$RIAGENDR, ref = 1) #female is  2
+AnalysisData$RIDRETH1 <- relevel(AnalysisData$RIDRETH1, ref = 2) # Mexican is 1
+AnalysisData$EMP_C <- relevel(AnalysisData$EMP_C, ref = 3)
+#AnalysisData$EDU_C <- relevel(AnalysisData$EDU_C, ref = 3)
+AnalysisData$MS_C <- relevel(AnalysisData$MS_C, ref = 2)
+AnalysisData$SM_C <- relevel(AnalysisData$SM_C, ref = 2)
+AnalysisData$ALC_C <- relevel(AnalysisData$ALC_C, ref = 3)
+AnalysisData$HSINC_C <- relevel(AnalysisData$HSINC_C, ref = 3)
+AnalysisData$USBORNLEN_C <- relevel(AnalysisData$USBORNLEN_C, ref =3)
+AnalysisData$CHOL_C <- relevel(AnalysisData$CHOL_C, ref=2)
+AnalysisData$OBS_C <- relevel(AnalysisData$OBS_C, ref = 2)
+AnalysisData$HYPER_C <- relevel(AnalysisData$HYPER_C, ref = 2)
+AnalysisData$DIAB_C <- relevel(AnalysisData$DIAB_C, ref = 2)
+
+#setting up survey design but with a quintile 3 as the reference
+survey_design_Q3 <- survey::svydesign(
+  id = ~ SDMVPSU,
+  strata = ~ SDMVSTRA,
+  weights = ~ WTDIETC,
+  nest = TRUE,
+  data = AnalysisData)
+
+```
+
+```{r, echo=F, fig.width=10, fig.height=10, message=F, warning=F}
+
+# relevel quintiles to set the reference to be level 3
+survey_design_Q3[["variables"]][["fac1_cat"]] <- relevel(survey_design_Q3[["variables"]][["fac1_cat"]], ref = "Q3")
+
+survey_design_Q3[["variables"]][["fac2_cat"]] <- relevel(survey_design_Q3[["variables"]][["fac2_cat"]], ref = "Q3")
+
+survey_design_Q3[["variables"]][["fac3_cat"]] <- relevel(survey_design_Q3[["variables"]][["fac3_cat"]], ref = "Q3")
+
+survey_design_Q3[["variables"]][["fac4_cat"]] <- relevel(survey_design_Q3[["variables"]][["fac4_cat"]], ref = "Q3")
+
+survey_design_Q3[["variables"]][["fac5_cat"]] <- relevel(survey_design_Q3[["variables"]][["fac5_cat"]], ref = "Q3")
+```
+
+## NHANES Diabetes
+
+```{r, echo=F, fig.width=10, fig.height=10, message=F, warning=F}
+# Diabetes
+
+#factor 1 - Q3 as ref
+diabf1_refQ3 <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac1_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+
+#factor 2 - Q3 as ref
+diabf2_refQ3 <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac2_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+
+#factor 3 - Q3 as ref
+diabf3_refQ3 <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac3_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+#factor 4 - Q3 as ref
+diabf4_refQ3 <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac4_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+
+#factor 5 - Q3 as ref
+diabf5_refQ3 <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+#all factors 
+diabf15_Q3ref <-
+  survey::svyglm(
+    DIAB_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + OBS_C + HYPER_C + fac1_cat + fac2_cat + fac3_cat + fac4_cat + fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+#https://stats.stackexchange.com/questions/97024/false-discovery-rate-of-multiple-regressions-models
+#FDR - single models
+
+diab_raw_pvals <- cbind(summary(diabf1_refQ3)$coefficients[,4],
+              summary(diabf2_refQ3)$coefficients[,4],
+              summary(diabf3_refQ3)$coefficients[,4],
+              summary(diabf4_refQ3)$coefficients[,4],
+              summary(diabf5_refQ3)$coefficients[,4])
+
+diab_adj_pvals <- FDRestimation::p.fdr(p=diab_raw_pvals)
+              
+diab_adj_pvals_table <- matrix(diab_adj_pvals[["fdrs"]],ncol = 5)
+rownames(diab_adj_pvals_table) <- rownames(diab_raw_pvals)
+
+
+#####
+#FDR - SINGLE AND ALL FACTOR MODELS
+
+
+diab_raw_pvals_all <- as.matrix(c(summary(diabf1_refQ3)$coefficients[,4],
+              summary(diabf2_refQ3)$coefficients[,4],
+              summary(diabf3_refQ3)$coefficients[,4],
+              summary(diabf4_refQ3)$coefficients[,4],
+              summary(diabf5_refQ3)$coefficients[,4],
+              summary(diabf15_Q3ref)$coefficients[,4]))
+
+diab_adj_pvals_all <- FDRestimation::p.fdr(p=diab_raw_pvals_all)
+              
+diab_adj_pvals_table_all <- matrix(diab_adj_pvals_all[["fdrs"]], ncol=1)
+rownames(diab_adj_pvals_table_all) <- rownames(diab_raw_pvals_all)
+
+```
+
+
+```{r, echo=F, fig.width=10, fig.height=10, message=F, warning=F}
+### Plots
+
+#factor 1 with Q3 as reference 
+boxLabels_refQ3 = c(
+  "Female",
+  "Age",
+  "Ethnicity(Mexican)",
+  "Energy" ,
+  "< HS/GED" ,
+  "HS/GED",
+  "US < 11 yrs",
+  "US > 10 yrs",
+  "Income < $25k",
+  "Income $25-75k",
+  "Unmarried",
+  "Retired",
+  "Unemployed",
+  "Current Drinker",
+  "Former Drinker",
+  "Smoker",
+  "Cholesterol",
+  "Obesity",
+  "Hypertension",
+  "1st Quintile",
+  "2nd Quintile",
+  "4th Quintile",
+  "5th Quintile"
+)
+
+# factor 1- save odds and CIs into dataframe to plot
+df_f1_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(diabf1_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(diabf1_refQ3)[2:24]),
+    boxCIHigh = exp(confint(diabf1_refQ3)[2:24, 2])
+  )
+
+pf1 <- ggplot(df_f1_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+
+#factor 2 - save odds and CIs into dataframe to plot
+df_f2_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(diabf2_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(diabf2_refQ3)[2:24]),
+    boxCIHigh = exp(confint(diabf2_refQ3)[2:24, 2]))
+
+pf2 <- ggplot(df_f2_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+
+#factor 3- save odds and CIs into dataframe for plots
+df_f3_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(diabf3_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(diabf3_refQ3)[2:24]),
+    boxCIHigh = exp(confint(diabf3_refQ3)[2:24, 2])
+  )
+
+pf3 <- ggplot(df_f3_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+
+#factor 4 - save odds and CIs into dataframe for plots
+
+df_f4_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(diabf4_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(diabf4_refQ3)[2:24]),
+    boxCIHigh = exp(confint(diabf4_refQ3)[2:24, 2])
+  )
+
+pf4 <- ggplot(df_f4_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+#factor 5 - save odds and CIs into dataframe for plots
+
+df_f5_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(diabf5_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(diabf5_refQ3)[2:24]),
+    boxCIHigh = exp(confint(diabf5_refQ3)[2:24, 2])
+  )
+
+pf5 <- ggplot(df_f5_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+
+#all factors with q3 as a reference
+boxLabels15_Q3ref = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Obesity", "Hypertension", "Meats-1st Quintle", "Meats-2nd Quintile", "Meats-4th Quintile", "Meats-5th Quintile", "Fats/Oils-1st Quintle", "Fats/Oils-2nd Quintile", "Fats/Oils-4th Quintile", "Fats/Oils-5th Quintile", "Grains/Legumes-1st Quintle", "Grains/Legumes-2nd Quintile", "Grains/Legumes-4th Quintile", "Grains/Legumes-5th Quintile","Dairy-1st Quintle", "Dairy-2nd Quintile", "Dairy-4th Quintile", "Dairy-5th Quintile", "Fruits/Veggies-1st Quintle", "Fruits/Veggies-2nd Quintile", "Fruits/Veggies-4th Quintile", "Fruits/Veggies-5th Quintile" )
+
+
+df_f15_Q3ref <-
+  data.frame(
+    yAxis = length(boxLabels15_Q3ref):1,
+    boxOdds = exp(diabf15_Q3ref$coefficients[2:40]),
+    boxCILow = exp(confint(diabf15_Q3ref)[2:40, 1]),
+    boxCIHigh = exp(confint(diabf15_Q3ref)[2:40, 2])
+  )
+
+pf15_Q3ref <-
+  ggplot(df_f15_Q3ref, aes(x = boxOdds, y = boxLabels15_Q3ref)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+
+ggpubr::ggarrange(pf1, pf2, pf3, pf4, pf5, pf15_Q3ref, labels = c("Meats", "Fats/Oils", "Grains/Legumes","Dairy", "Fruits/Veggies", "All Nutrient Patterns"), ncol = 2, nrow = 3)
+
+```
+
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+#saving results into dataframe to export for comparison
+NHANES_Diab_SingleFactors_refQ3 <- cbind(df_f1_refQ3, df_f2_refQ3, df_f3_refQ3, df_f4_refQ3, df_f5_refQ3)
+
+#write.csv(df_f15_Q3ref, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Diab_AllFactors_ORest_Q3ref_10.23.23.csv")
+
+#write.csv(NHANES_Diab_SingleFactors_refQ3, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Diab_SingleFactors_ORest_Q3ref_10.23.23.csv")
+```
+
+## NHANES Obesity
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+# Obesity
+
+#factor 1 - Q3 ref
+obsf1_refQ3 <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac1_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###########################################################################################
+
+#factor 2 - Q3 ref
+obsf2_refQ3 <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac2_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###########################################################################################
+
+#factor 3 - Q3 ref
+obsf3_refQ3 <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac3_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 4 - Q3 ref
+obsf4_refQ3 <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac4_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 5 - Q3 ref
+obsf5_refQ3 <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#all factors with q3 as reference
+obsf15_Q3ref <-
+  survey::svyglm(
+    OBS_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + HYPER_C + fac1_cat +fac1_cat +fac2_cat +fac3_cat +fac4_cat +fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+#####################################################################################
+#FDR - single models
+
+obs_raw_pvals <- cbind(summary(obsf1_refQ3)$coefficients[,4],
+              summary(obsf2_refQ3)$coefficients[,4],
+              summary(obsf3_refQ3)$coefficients[,4],
+              summary(obsf4_refQ3)$coefficients[,4],
+              summary(obsf5_refQ3)$coefficients[,4])
+
+obs_adj_pvals <- FDRestimation::p.fdr(p=obs_raw_pvals)
+              
+obs_adj_pvals_table <- matrix(obs_adj_pvals[["fdrs"]],ncol = 5)
+rownames(obs_adj_pvals_table) <- rownames(obs_raw_pvals)
+
+#####
+#FDR - SINGLE AND ALL FACTOR MODELS
+
+obs_raw_pvals_all <- as.matrix(c(summary(obsf1_refQ3)$coefficients[,4],
+              summary(obsf2_refQ3)$coefficients[,4],
+              summary(obsf3_refQ3)$coefficients[,4],
+              summary(obsf4_refQ3)$coefficients[,4],
+              summary(obsf5_refQ3)$coefficients[,4],
+              summary(obsf15_Q3ref)$coefficients[,4]
+              ))
+
+obs_adj_pvals_all <- FDRestimation::p.fdr(p=obs_raw_pvals_all)
+              
+obs_adj_pvals_table_all <- matrix(obs_adj_pvals_all[["fdrs"]], ncol=1)
+rownames(obs_adj_pvals_table_all) <- rownames(obs_raw_pvals_all)
+```
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+
+#factor 1 with Q3 as reference
+boxLabels_refQ3 = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Diabetes", "Hypertension", "1st Quintile", "2nd Quintile","4th Quintile","5th Quintile" )
+
+df_f1_obs_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(obsf1_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(obsf1_refQ3)[2:24]),
+    boxCIHigh = exp(confint(obsf1_refQ3)[2:24, 2])
+  )
+
+pf1  <-
+  ggplot(df_f1_obs_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+
+#factor 2
+df_f2_obs_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(obsf2_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(obsf2_refQ3)[2:24]),
+    boxCIHigh = exp(confint(obsf2_refQ3)[2:24, 2])
+  )
+
+pf2 <-
+  ggplot(df_f2_obs_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 3
+df_f3_obs_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(obsf3_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(obsf3_refQ3)[2:24]),
+    boxCIHigh = exp(confint(obsf3_refQ3)[2:24, 2])
+  )
+
+pf3 <-
+  ggplot(df_f3_obs_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 4
+df_f4_obs_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(obsf4_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(obsf4_refQ3)[2:24]),
+    boxCIHigh = exp(confint(obsf4_refQ3)[2:24, 2])
+  )
+
+pf4 <-
+  ggplot(df_f4_obs_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 5
+df_f5_obs_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(obsf5_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(obsf5_refQ3)[2:24]),
+    boxCIHigh = exp(confint(obsf5_refQ3)[2:24, 2])
+  )
+
+pf5 <-
+  ggplot(df_f5_obs_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+#all factors with q3 as a reference
+boxLabels15_Q3ref = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Obesity", "Hypertension", "Meats-1st Quintle", "Meats-2nd Quintile", "Meats-4th Quintile", "Meats-5th Quintile", "Fats/Oils-1st Quintle", "Fats/Oils-2nd Quintile", "Fats/Oils-4th Quintile", "Fats/Oils-5th Quintile", "Grains/Legumes-1st Quintle", "Grains/Legumes-2nd Quintile", "Grains/Legumes-4th Quintile", "Grains/Legumes-5th Quintile", "Dairy-1st Quintle", "Dairy-2nd Quintile", "Dairy-4th Quintile", "Dairy-5th Quintile","Fruits/Veggies-1st Quintle", "Fruits/Veggies-2nd Quintile", "Fruits/Veggies-4th Quintile", "Fruits/Veggies-5th Quintile" )
+
+
+df_f15_Q3ref <-
+  data.frame(
+    yAxis = length(boxLabels15_Q3ref):1,
+    boxOdds = exp(obsf15_Q3ref$coefficients[2:40]),
+    boxCILow = exp(confint(obsf15_Q3ref)[2:40, 1]),
+    boxCIHigh = exp(confint(obsf15_Q3ref)[2:40, 2])
+  )
+
+pf15_Q3ref <-
+  ggplot(df_f15_Q3ref, aes(x = boxOdds, y = boxLabels15_Q3ref)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+# one plot for all nutrients
+ggpubr::ggarrange(pf1, pf2, pf3, pf4, pf5, pf15_Q3ref, labels = c("Meats", "Fats/Oils", "Grains/Legumes","Dairy", "Fruits/Veggies", "All Nutrient Patterns"), ncol = 2, nrow = 3)
+```
+
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+#saving results into dataframe to export for comparison
+NHANES_Obesity_SingleFactors_refQ3 <- cbind(df_f1_obs_refQ3, df_f2_obs_refQ3, df_f3_obs_refQ3, df_f4_obs_refQ3, df_f5_obs_refQ3)
+
+#write.csv(df_f15_Q3ref, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Obesity_AllFactors_ORest_Q3ref_10.23.23.csv")
+
+#write.csv(NHANES_Obesity_SingleFactors_refQ3, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Obesity_SingleFactors_ORest_Q3ref_10.23.23.csv")
+```
+
+## NHANES Hypertension
+
+```{r, echo=FALSE,  fig.width=10, fig.height=10, message=F, warning=F}
+# Hypertension
+#factor 1 - Q3 ref
+hypf1_refQ3 <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac1_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###########################################################################################
+
+#factor 2 - Q3 ref
+hypf2_refQ3 <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac2_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+###########################################################################################
+
+#factor 3 - Q3 ref
+hypf3_refQ3 <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac3_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 4 - Q3 ref
+hypf4_refQ3 <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac4_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 5 - Q3 ref
+hypf5_refQ3 <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+#all factors with q3 as a reference
+hypf15_Q3ref <-
+  survey::svyglm(
+    HYPER_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + CHOL_C + DIAB_C + OBS_C + fac1_cat + fac2_cat +fac3_cat +fac4_cat +fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+
+#####################################################################################
+#FDR - single modles
+
+hyp_raw_pvals <- cbind(summary(hypf1_refQ3)$coefficients[,4],
+              summary(hypf2_refQ3)$coefficients[,4],
+              summary(hypf3_refQ3)$coefficients[,4],
+              summary(hypf4_refQ3)$coefficients[,4],
+              summary(hypf5_refQ3)$coefficients[,4])
+
+hyp_adj_pvals <- FDRestimation::p.fdr(p=hyp_raw_pvals)
+              
+hyp_adj_pvals_table <- matrix(hyp_adj_pvals[["fdrs"]],ncol = 5)
+rownames(hyp_adj_pvals_table) <- rownames(hyp_raw_pvals)
+
+#####
+#FDR - SINGLE AND ALL FACTOR MODELS
+hyp_raw_pvals_all <- as.matrix(c(summary(hypf1_refQ3)$coefficients[,4],
+              summary(hypf2_refQ3)$coefficients[,4],
+              summary(hypf3_refQ3)$coefficients[,4],
+              summary(hypf4_refQ3)$coefficients[,4],
+              summary(hypf5_refQ3)$coefficients[,4],
+              summary(hypf15_Q3ref)$coefficients[,4]
+              ))
+
+hyp_adj_pvals_all <- FDRestimation::p.fdr(p=hyp_raw_pvals_all)
+              
+hyp_adj_pvals_table_all <- matrix(hyp_adj_pvals_all[["fdrs"]], ncol=1)
+rownames(hyp_adj_pvals_table_all) <- rownames(hyp_raw_pvals_all)
+```
+
+```{r, echo=FALSE,  fig.width=10, fig.height=10, message=F, warning=F}
+### Plots
+
+#factor 1 Q3 ref
+boxLabels_refQ3 = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Diabetes", "Obesity", "1st Quintile", "2nd Quintile", "4th Quintile","5th Quintile" )
+
+df_f1_hyp_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(hypf1_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(hypf1_refQ3)[2:24]),
+    boxCIHigh = exp(confint(hypf1_refQ3)[2:24, 2])
+  )
+
+pf1  <-
+  ggplot(df_f1_hyp_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 2
+df_f2_hyp_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(hypf2_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(hypf2_refQ3)[2:24]),
+    boxCIHigh = exp(confint(hypf2_refQ3)[2:24, 2])
+  )
+
+pf2 <-
+  ggplot(df_f2_hyp_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 3
+df_f3_hyp_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(hypf3_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(hypf3_refQ3)[2:24]),
+    boxCIHigh = exp(confint(hypf3_refQ3)[2:24, 2])
+  )
+
+pf3 <-
+  ggplot(df_f3_hyp_refQ3, aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 4
+df_f4_hyp_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(hypf4_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(hypf4_refQ3)[2:24]),
+    boxCIHigh = exp(confint(hypf4_refQ3)[2:24, 2])
+  )
+
+pf4 <-
+  ggplot(df_f4_hyp_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 5
+df_f5_hyp_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(hypf5_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(hypf5_refQ3)[2:24]),
+    boxCIHigh = exp(confint(hypf5_refQ3)[2:24, 2])
+  )
+
+pf5 <-
+  ggplot(df_f5_hyp_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+#all factors with q3 as a reference
+boxLabels15_Q3ref = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Obesity", "Hypertension", "Meats-1st Quintle", "Meats-2nd Quintile", "Meats-4th Quintile", "Meats-5th Quintile", "Fats/Oils-1st Quintle", "Fats/Oils-2nd Quintile", "Fats/Oils-4th Quintile", "Fats/Oils-5th Quintile", "Grains/Legumes-1st Quintle", "Grains/Legumes-2nd Quintile", "Grains/Legumes-4th Quintile", "Grains/Legumes-5th Quintile","Dairy-1st Quintle", "Dairy-2nd Quintile", "Dairy-4th Quintile", "Dairy-5th Quintile", "Fruits/Veggies-1st Quintle", "Fruits/Veggies-2nd Quintile", "Fruits/Veggies-4th Quintile", "Fruits/Veggies-5th Quintile")
+
+
+hypdf_f15_Q3ref <-
+  data.frame(
+    yAxis = length(boxLabels15_Q3ref):1,
+    boxOdds = exp(hypf15_Q3ref$coefficients[2:40]),
+    boxCILow = exp(confint(hypf15_Q3ref)[2:40, 1]),
+    boxCIHigh = exp(confint(hypf15_Q3ref)[2:40, 2])
+  )
+
+pf15_Q3ref <-
+  ggplot(hypdf_f15_Q3ref, aes(x = boxOdds, y = boxLabels15_Q3ref)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+ggpubr::ggarrange(pf1, pf2, pf3, pf4, pf5, pf15_Q3ref, labels = c("Meats", "Fats/Oils", "Grains/Legumes", "Dairy", "Fruits/Veggies", "All Nutrient Patterns"), ncol = 2, nrow = 3)
+```
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+#saving results into dataframe to export for comparison
+NHANES_Hypert_SingleFactors_Q3 <- cbind(df_f1_hyp_refQ3, df_f2_hyp_refQ3, df_f3_hyp_refQ3, df_f4_hyp_refQ3, df_f5_hyp_refQ3)
+
+#write.csv(hypdf_f15_Q3ref, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Hypert_AllFactors_ORest_Q3ref_10.23.23.csv")
+
+#write.csv(NHANES_Hypert_SingleFactors_Q3, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Hypert_SingleFactors_ORest_Q3ref_10.23.23.csv")
+```
+
+\newpage
+
+## NHANES Cholesterol
+
+```{r, echo=FALSE,  fig.width=10, fig.height=10, message=F, warning=F}
+# Cholesterol
+
+#factor 1 - Q3 ref
+cholf1_refQ3 <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac1_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+###########################################################################################
+
+#factor 2 - Q3 ref
+cholf2_refQ3 <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac2_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 3 - Q3 ref
+cholf3_refQ3 <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac3_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 4 - Q3 ref
+cholf4_refQ3 <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac4_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+###############################################################################################
+
+#factor 5 - Q3 ref
+cholf5_refQ3 <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+###############################################################################################
+
+#all factors with q3 as a reference
+cholf15_Q3ref <-
+  survey::svyglm(
+    CHOL_C ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DR1TKCAL + EDU_C + USBORNLEN_C +
+      HSINC_C + MS_C + EMP_C + ALC_C + SM_C + HYPER_C + DIAB_C + OBS_C + fac1_cat + fac1_cat +fac2_cat +fac3_cat +fac4_cat +fac5_cat,
+    design = survey_design_Q3,
+    family = quasibinomial()
+  )
+
+
+#####################################################################################
+#FDR - single modles
+
+chol_raw_pvals <- cbind(summary(cholf1_refQ3)$coefficients[,4],
+              summary(cholf2_refQ3)$coefficients[,4],
+              summary(cholf3_refQ3)$coefficients[,4],
+              summary(cholf4_refQ3)$coefficients[,4],
+              summary(cholf5_refQ3)$coefficients[,4])
+
+chol_adj_pvals <- FDRestimation::p.fdr(p=hyp_raw_pvals)
+              
+chol_adj_pvals_table <- matrix(chol_adj_pvals[["fdrs"]],ncol = 5)
+rownames(chol_adj_pvals_table) <- rownames(chol_raw_pvals)
+
+#####
+#FDR - SINGLE AND ALL FACTOR MODELS
+chol_raw_pvals_all <- as.matrix(c(summary(cholf1_refQ3)$coefficients[,4],
+              summary(cholf2_refQ3)$coefficients[,4],
+              summary(cholf3_refQ3)$coefficients[,4],
+              summary(cholf4_refQ3)$coefficients[,4],
+              summary(cholf5_refQ3)$coefficients[,4],
+              summary(cholf15_Q3ref)$coefficients[,4]
+              ))
+
+chol_adj_pvals_all <- FDRestimation::p.fdr(p=chol_raw_pvals_all)
+              
+chol_adj_pvals_table_all <- matrix(chol_adj_pvals_all[["fdrs"]], ncol=1)
+rownames(chol_adj_pvals_table_all) <- rownames(chol_raw_pvals_all)
+```
+
+
+```{r, echo=FALSE,  fig.width=10, fig.height=10, message=F, warning=F}
+### Plots
+
+#factor 1 with Q3 ref 
+boxLabels_refQ3 = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Hypertension", "Diabetes", "Obesity", "1st Quintile", "2nd Quintile", "4th Quintile","5th Quintile")
+
+df_f1_chol_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(cholf1_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(cholf1_refQ3)[2:24]),
+    boxCIHigh = exp(confint(cholf1_refQ3)[2:24, 2])
+  )
+
+pf1  <-
+  ggplot(df_f1_chol_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+#factor 2
+
+df_f2_chol_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(cholf2_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(cholf2_refQ3)[2:24]),
+    boxCIHigh = exp(confint(cholf2_refQ3)[2:24, 2])
+  )
+
+pf2 <-
+  ggplot(df_f2_chol_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 3
+df_f3_chol_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(cholf3_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(cholf3_refQ3)[2:24]),
+    boxCIHigh = exp(confint(cholf3_refQ3)[2:24, 2])
+  )
+
+pf3 <-
+  ggplot(df_f3_chol_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 4
+df_f4_chol_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(cholf4_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(cholf4_refQ3)[2:24]),
+    boxCIHigh = exp(confint(cholf4_refQ3)[2:24, 2])
+  )
+
+pf4 <-
+  ggplot(df_f4_chol_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio")
+
+#factor 5
+df_f5_chol_refQ3 <-
+  data.frame(
+    yAxis = length(boxLabels_refQ3):1,
+    boxOdds = exp(cholf5_refQ3$coefficients[2:24]),
+    boxCILow = exp(confint(cholf5_refQ3)[2:24]),
+    boxCIHigh = exp(confint(cholf5_refQ3)[2:24, 2])
+  )
+
+pf5 <-
+  ggplot(df_f5_chol_refQ3 , aes(x = boxOdds, y = boxLabels_refQ3)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+
+#all factors with q3 as a reference
+boxLabels15_Q3ref = c("Female", "Age", "Ethnicity(Mexican)","Energy" , "< HS/GED" ,"HS/GED", "US < 11 yrs", "US > 10 yrs", "Income < $25k",  "Income $25-75k", "Unmarried",  "Retired", "Unemployed", "Current Drinker", "Former Drinker", "Smoker", "Cholesterol", "Obesity", "Hypertension", "Meats-1st Quintle", "Meats-2nd Quintile", "Meats-4th Quintile", "Meats-5th Quintile", "Fats/Oils-1st Quintle", "Fats/Oils-2nd Quintile", "Fats/Oils-4th Quintile", "Fats/Oils-5th Quintile", "Grains/Legumes-1st Quintle", "Grains/Legumes-2nd Quintile", "Grains/Legumes-4th Quintile", "Grains/Legumes-5th Quintile","Dairy-1st Quintle", "Dairy-2nd Quintile", "Dairy-4th Quintile", "Dairy-5th Quintile", "Fruits/Veggies-1st Quintle", "Fruits/Veggies-2nd Quintile", "Fruits/Veggies-4th Quintile", "Fruits/Veggies-5th Quintile" )
+
+
+df_chol_f15_Q3ref <-
+  data.frame(
+    yAxis = length(boxLabels15_Q3ref):1,
+    boxOdds = exp(cholf15_Q3ref$coefficients[2:40]),
+    boxCILow = exp(confint(cholf15_Q3ref)[2:40, 1]),
+    boxCIHigh = exp(confint(cholf15_Q3ref)[2:40, 2])
+  )
+
+pf15_Q3ref <-
+  ggplot(df_chol_f15_Q3ref, aes(x = boxOdds, y = boxLabels15_Q3ref)) +
+  geom_vline(aes(xintercept = 1), size = .25, linetype = "dashed") +
+  geom_errorbarh(
+    aes(xmax = boxCIHigh, xmin = boxCILow),
+    size = .5,
+    height =
+      .2,
+    color = "gray50"
+  ) +
+  geom_point(size = 1.5, color = "blue") +
+  xlim(0, 3.7) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  ylab("") +
+  xlab("Odds ratio") 
+
+ggpubr::ggarrange(pf1, pf2, pf3, pf4, pf5, pf15_Q3ref, labels = c("Meats", "Fats/Oils","Grains/Legumes", "Dairy", "Fruits/Veggies", "All Nutrient Patterns"), ncol = 2, nrow = 3)
+```
+
+
+```{r, echo=F,  fig.width=10, fig.height=10, message=F, warning=F}
+#saving results into dataframe to export for comparison
+NHANES_Chol_SingleFactors_refQ3 <- cbind(df_f1_chol_refQ3, df_f2_chol_refQ3, df_f3_chol_refQ3, df_f4_chol_refQ3, df_f5_chol_refQ3)
+
+#write.csv(df_chol_f15_Q3ref, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Chol_AllFactors_ORest_Q3ref_10.23.23.csv")
+
+#write.csv(NHANES_Chol_SingleFactors_refQ3, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_Chol_SingleFactors_ORest_Q3ref_10.23.23.csv")
+```
+
+```{r}
+#save pvalues in a excel file
+ALLadjusted_pvals <- as.data.frame(cbind(diab_adj_pvals_table_all, hyp_adj_pvals_table_all, obs_adj_pvals_table_all, chol_adj_pvals_table_all))
+
+colnames(ALLadjusted_pvals) <- c("Diabetes", "Hypertension", "Obesity", "Cholesterol")
+
+#write.csv(ALLadjusted_pvals, "~/OneDrive - Harvard University/CVD-Nutrient Research/Analysis/Analysis for Both/Regression Analysis/NHANES_pvales_single_full_Q3ref_10.23.23.csv")
+```
+
+
+
